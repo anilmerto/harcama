@@ -2,20 +2,93 @@ import streamlit as st
 import pandas as pd
 import google.generativeai as genai
 import json
+import io
+import base64
 from PIL import Image
+from datetime import datetime
+import firebase_admin
+from firebase_admin import credentials, firestore
+import streamlit_authenticator as stauth
+import yaml
+from yaml.loader import SafeLoader
 
 # --- SAYFA YAPILANDIRMASI ---
-st.set_page_config(page_title="Akıllı Masraf Asistanı", layout="wide", page_icon="🧾")
+st.set_page_config(page_title="Akıllı Masraf Portalı", layout="wide", page_icon="🧾")
+
+# --- KİMLİK DOĞRULAMA (LOGIN) SİSTEMİ ---
+# Kullanıcı bilgilerini güvenli bir şekilde Streamlit Secrets'tan alıyoruz
+try:
+    authenticator = stauth.Authenticate(
+        st.secrets["credentials"],
+        st.secrets["cookie"]["name"],
+        st.secrets["cookie"]["key"],
+        st.secrets["cookie"]["expiry_days"],
+    )
+    name, authentication_status, username = authenticator.login("main")
+except Exception as e:
+    st.error("Giriş sistemi yapılandırılamadı. Lütfen Streamlit Cloud 'Secrets' ayarlarını yaptığınızdan emin olun.")
+    st.stop()
+
+if authentication_status is False:
+    st.error("Kullanıcı adı veya şifre hatalı!")
+    st.stop()
+elif authentication_status is None:
+    st.warning("Lütfen kullanıcı adınızı ve şifrenizi girin.")
+    st.stop()
+
+# --- GİRİŞ BAŞARILI: ÇIKIŞ BUTONU ---
+authenticator.logout('Çıkış Yap', 'sidebar')
+st.sidebar.write(f"Hoş geldin, *{name}* 👋")
+
+# --- FIREBASE VERİTABANI BAĞLANTISI ---
+@st.cache_resource
+def init_firebase():
+    if not firebase_admin._apps:
+        # Streamlit Secrets üzerinden Firebase JSON anahtarını okuyoruz
+        cred_dict = dict(st.secrets["firebase"])
+        cred = credentials.Certificate(cred_dict)
+        firebase_admin.initialize_app(cred)
+    return firestore.client()
+
+try:
+    db = init_firebase()
+except Exception as e:
+    st.error("Veritabanı bağlantısı kurulamadı. Firebase Secrets ayarlarını kontrol edin.")
+    st.stop()
+
+# --- GEMINI YZ YAPILANDIRMASI ---
+try:
+    genai.configure(api_key=st.secrets["gemini"]["api_key"])
+except:
+    st.sidebar.error("Gemini API Anahtarı 'Secrets' içinde bulunamadı!")
+
+# --- YARDIMCI FONKSİYONLAR ---
+def compress_and_encode_image(image):
+    """Görseli veritabanına sığacak şekilde küçültür ve Base64'e çevirir"""
+    img = image.copy()
+    img.thumbnail((800, 800)) # Boyutu sınırla
+    buffered = io.BytesIO()
+    img.save(buffered, format="JPEG", quality=70)
+    return base64.b64encode(buffered.getvalue()).decode("utf-8")
+
+def get_expenses(is_admin=False, user_id=None):
+    """Veritabanından masrafları çeker"""
+    expenses_ref = db.collection('masraflar')
+    if not is_admin:
+        # Normal kullanıcı sadece kendi fişlerini görür
+        query = expenses_ref.where('username', '==', user_id).stream()
+    else:
+        # Admin herkesin fişini görür
+        query = expenses_ref.stream()
+    
+    data = []
+    for doc in query:
+        item = doc.to_dict()
+        item['id'] = doc.id
+        data.append(item)
+    return data
 
 # --- VERİ VE AYAR YÖNETİMİ (SESSION STATE) ---
-# Uygulama yenilendiğinde verilerin kaybolmaması için
-if 'masraflar' not in st.session_state:
-    st.session_state['masraflar'] = pd.DataFrame(columns=[
-        "Tarih", "İşletme", "Fiş No", "Harcama Türü", "Kategori", 
-        "Toplam Tutar", "KDV Oranı", "KDV Tutarı", "Dapgeon Payı", "Liniga Payı"
-    ])
-
-# Dinamik Kategori Ayarları (Varsayılanlar)
 if 'kategoriler' not in st.session_state:
     st.session_state['kategoriler'] = {
         "Temsil": {"limit": 7000.0, "dapgeon_oran": 60, "liniga_oran": 40},
@@ -23,170 +96,164 @@ if 'kategoriler' not in st.session_state:
         "Bölgesel": {"limit": 3000.0, "dapgeon_oran": 60, "liniga_oran": 40}
     }
 
-# --- YAN PANEL: AYARLAR VE YENİ KATEGORİ EKLEME ---
-with st.sidebar:
-    st.header("⚙️ Sistem Ayarları")
-    
-    # API Anahtarı (Kullanıcının kendi Gemini API anahtarını girmesi için)
-    api_key = st.text_input("Google Gemini API Anahtarı", type="password", help="Yapay zekanın fişleri okuyabilmesi için gereklidir.")
-    if api_key:
-        genai.configure(api_key=api_key)
-    else:
-        st.warning("Fiş okuma özelliği için API anahtarınızı girin.")
+# --- YAN PANEL: AYARLAR (SADECE ADMİN GÖREBİLİR) ---
+is_admin = (username == 'admin') # Admin kontrolü
 
-    st.divider()
-    st.header("📌 Limit ve Oran Ayarları")
+if is_admin:
+    st.sidebar.divider()
+    st.sidebar.header("⚙️ Sistem Ayarları (Admin)")
     
-    # Mevcut Kategorileri Düzenleme
     for kat_adi in list(st.session_state['kategoriler'].keys()):
-        with st.expander(f"{kat_adi} Ayarları", expanded=False):
-            yeni_limit = st.number_input(f"Limit (TL) - {kat_adi}", value=float(st.session_state['kategoriler'][kat_adi]['limit']))
-            dap_oran = st.slider(f"Dapgeon Oranı (%) - {kat_adi}", 0, 100, int(st.session_state['kategoriler'][kat_adi]['dapgeon_oran']))
-            lin_oran = 100 - dap_oran
-            st.info(f"Liniga Oranı: %{lin_oran}")
+        with st.sidebar.expander(f"{kat_adi} Ayarları", expanded=False):
+            yeni_limit = st.number_input(f"Limit (TL) - {kat_adi}", value=float(st.session_state['kategoriler'][kat_adi]['limit']), key=f"lim_{kat_adi}")
             
-            # Ayarları Güncelle
+            # %100 Kuralı: Dapgeon seçilince Liniga otomatik kalan olur
+            dap_oran = st.slider(f"Dapgeon Oranı (%) - {kat_adi}", 0, 100, int(st.session_state['kategoriler'][kat_adi]['dapgeon_oran']), key=f"oran_{kat_adi}")
+            lin_oran = 100 - dap_oran 
+            st.info(f"Liniga Oranı (Otomatik): %{lin_oran}")
+            
             st.session_state['kategoriler'][kat_adi]['limit'] = yeni_limit
             st.session_state['kategoriler'][kat_adi]['dapgeon_oran'] = dap_oran
             st.session_state['kategoriler'][kat_adi]['liniga_oran'] = lin_oran
 
-    st.divider()
-    # Yeni Kategori Ekleme (Örn: İlaç Kalemi)
-    st.subheader("➕ Yeni Kalem Ekle")
-    yeni_kat_adi = st.text_input("Kategori Adı (Örn: İlaç)")
-    if st.button("Kategoriyi Ekle") and yeni_kat_adi:
+    st.sidebar.divider()
+    st.sidebar.subheader("➕ Yeni Kalem Ekle")
+    yeni_kat_adi = st.sidebar.text_input("Kategori Adı (Örn: İlaç)")
+    if st.sidebar.button("Kategoriyi Ekle") and yeni_kat_adi:
         if yeni_kat_adi not in st.session_state['kategoriler']:
             st.session_state['kategoriler'][yeni_kat_adi] = {"limit": 5000.0, "dapgeon_oran": 60, "liniga_oran": 40}
-            st.success(f"'{yeni_kat_adi}' başarıyla eklendi! Sayfayı yenileyin.")
+            st.sidebar.success(f"'{yeni_kat_adi}' eklendi!")
             st.rerun()
 
 # --- ANA EKRAN ---
 st.title("🧾 Akıllı Fiş Analiz ve Dağıtım Portalı")
-st.markdown("Fiş fotoğrafını yükleyin, yapay zeka detayları okusun ve belirlediğiniz oranlara göre dağıtsın.")
 
-# 1. Fiş Yükleme
-uploaded_file = st.file_uploader("Fiş veya Fatura Fotoğrafı Yükle", type=['png', 'jpg', 'jpeg'])
+tab_yeni, tab_gecmis = st.tabs(["➕ Yeni Fiş Yükle", "📊 Masraf Raporları"])
 
-if uploaded_file is not None:
-    col_img, col_form = st.columns([1, 2])
-    
-    with col_img:
-        image = Image.open(uploaded_file)
-        st.image(image, caption="Yüklenen Fiş", use_column_width=True)
-    
-    with col_form:
-        st.subheader("🤖 Yapay Zeka Analizi")
+with tab_yeni:
+    st.markdown("Fiş fotoğrafını yüklediğiniz an yapay zeka otomatik olarak okuyacaktır.")
+    uploaded_file = st.file_uploader("Fiş veya Fatura Fotoğrafı Yükle", type=['png', 'jpg', 'jpeg'])
+
+    if uploaded_file is not None:
+        col_img, col_form = st.columns([1, 2])
         
-        # Yapay Zeka ile Veri Çekme Butonu
-        if st.button("Fişi Okut ve Analiz Et", type="primary"):
-            if not api_key:
-                st.error("Lütfen sol menüden API anahtarınızı giriniz!")
-            else:
+        image = Image.open(uploaded_file)
+        with col_img:
+            st.image(image, caption="Yüklenen Fiş", use_column_width=True)
+        
+        with col_form:
+            st.subheader("🤖 Yapay Zeka Analizi ve Düzenleme")
+            
+            # YENİ ÖZELLİK: Fiş yüklenir yüklenmez otomatik okuma (Sadece 1 kez çalışır)
+            file_bytes = uploaded_file.getvalue()
+            if st.session_state.get('last_uploaded') != file_bytes:
+                st.session_state['last_uploaded'] = file_bytes
+                st.session_state['ai_data'] = {} # Eski veriyi temizle
+                
                 with st.spinner("Yapay zeka fişi inceliyor, lütfen bekleyin..."):
                     try:
-                        # Gemini Modeli Çağrısı
                         model = genai.GenerativeModel('gemini-2.5-flash')
                         prompt = """
-                        Bu fiş/fatura görüntüsünü analiz et ve aşağıdaki bilgileri çıkar. Sadece geçerli bir JSON formatında yanıt ver. Markdown veya fazladan metin kullanma.
-                        Format:
-                        {
-                          "isletme": "Dükkan veya Firma adı",
-                          "fis_no": "Fiş veya Fatura numarası (yoksa boş bırak)",
-                          "tarih": "Tarih (GG.AA.YYYY)",
-                          "harcama_turu": "Harcamanın tahmini türü (Gıda, Restoran, Kırtasiye vb.)",
-                          "toplam_tutar": 150.50,
-                          "kdv_orani": 10,
-                          "kdv_tutari": 15.05
-                        }
+                        Bu fiş/fatura görüntüsünü analiz et ve aşağıdaki bilgileri çıkar. Sadece geçerli bir JSON formatında yanıt ver. 
+                        Format: {"isletme": "Ad", "fis_no": "No", "tarih": "GG.AA.YYYY", "harcama_turu": "Tür", "toplam_tutar": 150.50, "kdv_orani": 10, "kdv_tutari": 15.05}
                         Tutar ve KDV kısımları kesinlikle sayı (float) olmalıdır.
                         """
                         response = model.generate_content([prompt, image])
-                        
-                        # Yanıttan JSON formatını temizleyip ayıklama
                         json_str = response.text.replace("```json", "").replace("```", "").strip()
-                        ai_data = json.loads(json_str)
-                        
-                        # Geçici olarak session_state'e kaydet (düzenlenebilir olması için)
-                        st.session_state['ai_data'] = ai_data
-                        st.success("Analiz başarılı! Lütfen bilgileri kontrol edin.")
+                        st.session_state['ai_data'] = json.loads(json_str)
+                        st.success("Analiz başarılı! Bilgileri kontrol edip kaydedebilirsiniz.")
                     except Exception as e:
-                        st.error(f"Okuma sırasında bir hata oluştu: {e}")
-                        st.session_state['ai_data'] = {}
-
-        # Düzenlenebilir Form (AI yanlış okursa düzeltmek için)
-        ai_data = st.session_state.get('ai_data', {})
-        
-        with st.form("masraf_formu"):
-            f_col1, f_col2 = st.columns(2)
-            with f_col1:
-                isletme = st.text_input("İşletme Adı", value=ai_data.get("isletme", ""))
-                fis_no = st.text_input("Fiş/Fatura No", value=ai_data.get("fis_no", ""))
-                tarih = st.text_input("Tarih", value=ai_data.get("tarih", ""))
-                harcama_turu = st.text_input("Harcama Türü", value=ai_data.get("harcama_turu", ""))
-            with f_col2:
-                toplam_tutar = st.number_input("Toplam Tutar (TL)", value=float(ai_data.get("toplam_tutar", 0.0)), step=10.0)
-                kdv_orani = st.number_input("KDV Oranı (%)", value=float(ai_data.get("kdv_orani", 0.0)), step=1.0)
-                kdv_tutari = st.number_input("KDV Tutarı (TL)", value=float(ai_data.get("kdv_tutari", 0.0)), step=1.0)
-                secilen_kategori = st.selectbox("Harcama Kategorisi (Limit Kalemi)", list(st.session_state['kategoriler'].keys()))
-
-            submit_button = st.form_submit_button("Sisteme Kaydet ve Paylaştır")
+                        st.error("Okuma sırasında hata oluştu. Lütfen bilgileri manuel giriniz.")
             
-            if submit_button and toplam_tutar > 0:
-                # Dağıtım Hesaplaması
-                oranlar = st.session_state['kategoriler'][secilen_kategori]
-                dapgeon_payi = round(toplam_tutar * (oranlar['dapgeon_oran'] / 100), 2)
-                liniga_payi = round(toplam_tutar * (oranlar['liniga_oran'] / 100), 2)
+            # Manuel Düzenleme Formu
+            ai_data = st.session_state.get('ai_data', {})
+            
+            with st.form("masraf_formu"):
+                f_col1, f_col2 = st.columns(2)
+                with f_col1:
+                    isletme = st.text_input("İşletme Adı", value=ai_data.get("isletme", ""))
+                    fis_no = st.text_input("Fiş/Fatura No", value=ai_data.get("fis_no", ""))
+                    tarih = st.text_input("Tarih", value=ai_data.get("tarih", ""))
+                    harcama_turu = st.text_input("Harcama Türü", value=ai_data.get("harcama_turu", ""))
+                with f_col2:
+                    toplam_tutar = st.number_input("Toplam Tutar (TL)", value=float(ai_data.get("toplam_tutar", 0.0)), step=10.0)
+                    kdv_orani = st.number_input("KDV Oranı (%)", value=float(ai_data.get("kdv_orani", 0.0)), step=1.0)
+                    kdv_tutari = st.number_input("KDV Tutarı (TL)", value=float(ai_data.get("kdv_tutari", 0.0)), step=1.0)
+                    secilen_kategori = st.selectbox("Harcama Kategorisi (Limit Kalemi)", list(st.session_state['kategoriler'].keys()))
+
+                submit_button = st.form_submit_button("Sisteme Kaydet ve Paylaştır")
                 
-                # DataFrame'e Ekleme
-                yeni_kayit = {
-                    "Tarih": tarih,
-                    "İşletme": isletme,
-                    "Fiş No": fis_no,
-                    "Harcama Türü": harcama_turu,
-                    "Kategori": secilen_kategori,
-                    "Toplam Tutar": toplam_tutar,
-                    "KDV Oranı": kdv_orani,
-                    "KDV Tutarı": kdv_tutari,
-                    "Dapgeon Payı": dapgeon_payi,
-                    "Liniga Payı": liniga_payi
-                }
+                if submit_button and toplam_tutar > 0:
+                    with st.spinner("Veritabanına kaydediliyor..."):
+                        # Dağıtım Hesaplaması
+                        oranlar = st.session_state['kategoriler'][secilen_kategori]
+                        dapgeon_payi = round(toplam_tutar * (oranlar['dapgeon_oran'] / 100), 2)
+                        liniga_payi = round(toplam_tutar * (oranlar['liniga_oran'] / 100), 2)
+                        
+                        # Resmi Base64 formatına çevir
+                        img_base64 = compress_and_encode_image(image)
+                        
+                        # Veritabanına Ekleme
+                        yeni_kayit = {
+                            "username": username,
+                            "kullanici_adi": name,
+                            "tarih": tarih,
+                            "isletme": isletme,
+                            "fis_no": fis_no,
+                            "harcama_turu": harcama_turu,
+                            "kategori": secilen_kategori,
+                            "toplam_tutar": toplam_tutar,
+                            "kdv_orani": kdv_orani,
+                            "kdv_tutari": kdv_tutari,
+                            "dapgeon_payi": dapgeon_payi,
+                            "liniga_payi": liniga_payi,
+                            "gorsel_b64": img_base64,
+                            "timestamp": firestore.SERVER_TIMESTAMP
+                        }
+                        
+                        db.collection('masraflar').add(yeni_kayit)
+                        st.success(f"Başarıyla kaydedildi! (Dapgeon: {dapgeon_payi} TL | Liniga: {liniga_payi} TL)")
+                        st.session_state['last_uploaded'] = None # Formu sıfırlamak için
+
+with tab_gecmis:
+    st.header(f"📊 {'Tüm Ekip Harcamaları (Admin Paneli)' if is_admin else 'Kendi Harcamalarınız'}")
+    
+    masraflar_list = get_expenses(is_admin=is_admin, user_id=username)
+    
+    if masraflar_list:
+        df = pd.DataFrame(masraflar_list)
+        # Sütunları düzenle
+        gosterilecek_sutunlar = ["tarih", "kullanici_adi", "isletme", "toplam_tutar", "kategori", "dapgeon_payi", "liniga_payi"]
+        df_gosterim = df[gosterilecek_sutunlar].copy()
+        
+        st.dataframe(df_gosterim, use_container_width=True)
+        
+        # Fiş Görselini Görme Alanı
+        st.divider()
+        st.subheader("🔍 Fiş Görseli Görüntüleme")
+        secilen_isletme = st.selectbox("Görselini görmek istediğiniz fişi seçin:", df['isletme'].tolist() + ["Seçiniz..."], index=len(df))
+        
+        if secilen_isletme != "Seçiniz...":
+            secilen_kayit = df[df['isletme'] == secilen_isletme].iloc[0]
+            if pd.notna(secilen_kayit.get('gorsel_b64')):
+                image_bytes = base64.b64decode(secilen_kayit['gorsel_b64'])
+                st.image(image_bytes, caption=f"{secilen_kayit['isletme']} - {secilen_kayit['toplam_tutar']} TL", width=400)
+            else:
+                st.warning("Bu fişe ait görsel bulunamadı.")
                 
-                st.session_state['masraflar'] = pd.concat([st.session_state['masraflar'], pd.DataFrame([yeni_kayit])], ignore_index=True)
-                st.success(f"{toplam_tutar} TL, {secilen_kategori} kalemine başarıyla eklendi! (Dapgeon: {dapgeon_payi} TL | Liniga: {liniga_payi} TL)")
-                st.session_state['ai_data'] = {} # Formu temizle
-
-# --- GİRİLEN MASRAFLAR VE BÜTÇE TAKİBİ ---
-st.divider()
-st.header("📊 Masraf Listesi ve Bütçe Durumu")
-
-tab1, tab2 = st.tabs(["Girilen Fişler", "Bütçe ve Limit Raporu"])
-
-with tab1:
-    if not st.session_state['masraflar'].empty:
-        st.dataframe(st.session_state['masraflar'], use_container_width=True)
-        
-        # Excel Olarak İndirme
-        csv = st.session_state['masraflar'].to_csv(index=False).encode('utf-8')
-        st.download_button("Excel/CSV Olarak İndir", data=csv, file_name='masraflar.csv', mime='text/csv')
+        # Bütçe Özeti (Sadece Admin için tüm bütçe)
+        if is_admin:
+            st.divider()
+            st.subheader("📈 Kategori Bazlı Bütçe Tüketimi (Tüm Ekip)")
+            kategori_toplam = df.groupby('kategori')['toplam_tutar'].sum().reset_index()
+            for _, row in kategori_toplam.iterrows():
+                kat = row['kategori']
+                harcanan = row['toplam_tutar']
+                limit = st.session_state['kategoriler'].get(kat, {}).get('limit', 0)
+                if limit > 0:
+                    yuzde = min((harcanan / limit) * 100, 100)
+                    kalan = limit - harcanan
+                    st.markdown(f"**{kat}:** {harcanan:,.2f} TL / {limit:,.2f} TL (Kalan: {kalan:,.2f} TL)")
+                    st.progress(yuzde / 100)
     else:
-        st.info("Henüz sisteme kaydedilmiş bir masraf bulunmuyor.")
-
-with tab2:
-    if not st.session_state['masraflar'].empty:
-        # Kategori bazlı toplam harcamaları hesapla
-        kategori_toplam = st.session_state['masraflar'].groupby('Kategori')['Toplam Tutar'].sum().reset_index()
-        
-        for _, row in kategori_toplam.iterrows():
-            kat = row['Kategori']
-            harcanan = row['Toplam Tutar']
-            limit = st.session_state['kategoriler'][kat]['limit']
-            kalan = limit - harcanan
-            yuzde = min((harcanan / limit) * 100, 100) if limit > 0 else 100
-            
-            st.markdown(f"**{kat} Kalemi:** {harcanan:,.2f} TL / {limit:,.2f} TL (Kalan: {kalan:,.2f} TL)")
-            st.progress(yuzde / 100)
-            
-            if kalan < 0:
-                st.error(f"⚠️ DİKKAT: {kat} kaleminde limit {abs(kalan):,.2f} TL aşıldı!")
-    else:
-         st.info("Bütçe durumu hesaplanması için veri bekleniyor.")
+        st.info("Henüz sisteme kaydedilmiş bir fiş bulunmuyor.")
