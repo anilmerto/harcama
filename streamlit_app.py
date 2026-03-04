@@ -32,8 +32,8 @@ try:
             "password": plain_pass
         }
 
-    # Authenticator v0.4+ kuralı: Tüm kullanıcı sözlüğünü ver, o kendi içinde şifrelesin
-    stauth.Hasher.hash_passwords(credentials_dict["usernames"])
+    # Authenticator v0.4+ kuralı: Tüm kimlik bilgileri sözlüğünü ver, o "usernames" başlığını kendi bulup şifreler
+    stauth.Hasher.hash_passwords(credentials_dict)
 
     # Authenticator nesnesini yapılandır
     authenticator = stauth.Authenticate(
@@ -278,7 +278,4 @@ with tab_gecmis:
                 if limit > 0:
                     yuzde = min((harcanan / limit) * 100, 100)
                     kalan = limit - harcanan
-                    st.markdown(f"**{kat}:** {harcanan:,.2f} TL / {limit:,.2f} TL (Kalan: {kalan:,.2f} TL)")
-                    st.progress(yuzde / 100)
-    else:
-        st.info("Henüz sisteme kaydedilmiş bir fiş bulunmuyor.")
+                    st.markdown(f"**{kat}:** {harcanan:,.2f} TL / {limit
