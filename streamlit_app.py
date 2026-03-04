@@ -22,7 +22,8 @@ try:
     for u_name, u_info in st.secrets["credentials"]["usernames"].items():
         # Gizli boşluk karakterlerini temizliyoruz
         plain_pass = str(u_info["password"]).strip()
-        hashed_pass = stauth.Hasher([plain_pass]).generate()[0]
+        # Hasher sınıfına parametreyi keyword argument (passwords=...) olarak veriyoruz.
+        hashed_pass = stauth.Hasher(passwords=[plain_pass]).generate()[0]
         
         creds["usernames"][u_name] = {
             "email": u_info.get("email"),
