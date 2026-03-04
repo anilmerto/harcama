@@ -206,4 +206,79 @@ with tab_yeni:
                     kdv_tutari = st.number_input("KDV Tutarı (TL)", value=float(ai_data.get("kdv_tutari", 0.0)), step=1.0)
                     secilen_kategori = st.selectbox("Harcama Kategorisi (Limit Kalemi)", list(st.session_state['kategoriler'].keys()))
 
-                submit_button = st.form_submit_button("Sisteme Kaydet ve Pay
+                submit_button = st.form_submit_button("Sisteme Kaydet ve Paylaştır")
+                
+                if submit_button and toplam_tutar > 0:
+                    with st.spinner("Veritabanına kaydediliyor..."):
+                        # Dağıtım Hesaplaması
+                        oranlar = st.session_state['kategoriler'][secilen_kategori]
+                        dapgeon_payi = round(toplam_tutar * (oranlar['dapgeon_oran'] / 100), 2)
+                        liniga_payi = round(toplam_tutar * (oranlar['liniga_oran'] / 100), 2)
+                        
+                        # Resmi Base64 formatına çevir
+                        img_base64 = compress_and_encode_image(image)
+                        
+                        # Veritabanına Ekleme
+                        yeni_kayit = {
+                            "username": username,
+                            "kullanici_adi": name,
+                            "tarih": tarih,
+                            "isletme": isletme,
+                            "fis_no": fis_no,
+                            "harcama_turu": harcama_turu,
+                            "kategori": secilen_kategori,
+                            "toplam_tutar": toplam_tutar,
+                            "kdv_orani": kdv_orani,
+                            "kdv_tutari": kdv_tutari,
+                            "dapgeon_payi": dapgeon_payi,
+                            "liniga_payi": liniga_payi,
+                            "gorsel_b64": img_base64,
+                            "timestamp": firestore.SERVER_TIMESTAMP
+                        }
+                        
+                        db.collection('masraflar').add(yeni_kayit)
+                        st.success(f"Başarıyla kaydedildi! (Dapgeon: {dapgeon_payi} TL | Liniga: {liniga_payi} TL)")
+                        st.session_state['last_uploaded'] = None # Formu sıfırlamak için
+
+with tab_gecmis:
+    st.header(f"📊 {'Tüm Ekip Harcamaları (Admin Paneli)' if is_admin else 'Kendi Harcamalarınız'}")
+    
+    masraflar_list = get_expenses(is_admin=is_admin, user_id=username)
+    
+    if masraflar_list:
+        df = pd.DataFrame(masraflar_list)
+        # Sütunları düzenle
+        gosterilecek_sutunlar = ["tarih", "kullanici_adi", "isletme", "toplam_tutar", "kategori", "dapgeon_payi", "liniga_payi"]
+        df_gosterim = df[gosterilecek_sutunlar].copy()
+        
+        st.dataframe(df_gosterim, use_container_width=True)
+        
+        # Fiş Görselini Görme Alanı
+        st.divider()
+        st.subheader("🔍 Fiş Görseli Görüntüleme")
+        secilen_isletme = st.selectbox("Görselini görmek istediğiniz fişi seçin:", df['isletme'].tolist() + ["Seçiniz..."], index=len(df))
+        
+        if secilen_isletme != "Seçiniz...":
+            secilen_kayit = df[df['isletme'] == secilen_isletme].iloc[0]
+            if pd.notna(secilen_kayit.get('gorsel_b64')):
+                image_bytes = base64.b64decode(secilen_kayit['gorsel_b64'])
+                st.image(image_bytes, caption=f"{secilen_kayit['isletme']} - {secilen_kayit['toplam_tutar']} TL", width=400)
+            else:
+                st.warning("Bu fişe ait görsel bulunamadı.")
+                
+        # Bütçe Özeti (Sadece Admin için tüm bütçe)
+        if is_admin:
+            st.divider()
+            st.subheader("📈 Kategori Bazlı Bütçe Tüketimi (Tüm Ekip)")
+            kategori_toplam = df.groupby('kategori')['toplam_tutar'].sum().reset_index()
+            for _, row in kategori_toplam.iterrows():
+                kat = row['kategori']
+                harcanan = row['toplam_tutar']
+                limit = st.session_state['kategoriler'].get(kat, {}).get('limit', 0)
+                if limit > 0:
+                    yuzde = min((harcanan / limit) * 100, 100)
+                    kalan = limit - harcanan
+                    st.markdown(f"**{kat}:** {harcanan:,.2f} TL / {limit:,.2f} TL (Kalan: {kalan:,.2f} TL)")
+                    st.progress(yuzde / 100)
+    else:
+        st.info("Henüz sisteme kaydedilmiş bir fiş bulunmuyor.")
