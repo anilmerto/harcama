@@ -16,25 +16,44 @@ from yaml.loader import SafeLoader
 st.set_page_config(page_title="Akıllı Masraf Portalı", layout="wide", page_icon="🧾")
 
 # --- KİMLİK DOĞRULAMA (LOGIN) SİSTEMİ ---
-# Kullanıcı bilgilerini güvenli bir şekilde Streamlit Secrets'tan alıyoruz
 try:
+    # Parolaları otomatik olarak şifrelemek (hash) için sözlüğü yeniden oluşturuyoruz
+    creds = {"usernames": {}}
+    for u_name, u_info in st.secrets["credentials"]["usernames"].items():
+        # Gizli boşluk karakterlerini temizliyoruz
+        plain_pass = str(u_info["password"]).strip()
+        hashed_pass = stauth.Hasher([plain_pass]).generate()[0]
+        
+        creds["usernames"][u_name] = {
+            "email": u_info.get("email"),
+            "name": u_info.get("name"),
+            "password": hashed_pass
+        }
+
     authenticator = stauth.Authenticate(
-        st.secrets["credentials"],
+        creds,
         st.secrets["cookie"]["name"],
         st.secrets["cookie"]["key"],
         st.secrets["cookie"]["expiry_days"],
     )
-    name, authentication_status, username = authenticator.login("main")
+    
+    # Streamlit-authenticator v0.4+ uyumlu login
+    authenticator.login()
 except Exception as e:
-    st.error("Giriş sistemi yapılandırılamadı. Lütfen Streamlit Cloud 'Secrets' ayarlarını yaptığınızdan emin olun.")
+    st.error(f"Giriş sistemi yapılandırılamadı. Hata detayı: {e}")
     st.stop()
 
-if authentication_status is False:
+auth_status = st.session_state.get("authentication_status")
+
+if auth_status is False:
     st.error("Kullanıcı adı veya şifre hatalı!")
     st.stop()
-elif authentication_status is None:
-    st.warning("Lütfen kullanıcı adınızı ve şifrenizi girin.")
+elif auth_status is None:
+    st.info("Lütfen işlem yapabilmek için giriş yapın.")
     st.stop()
+
+name = st.session_state.get("name")
+username = st.session_state.get("username")
 
 # --- GİRİŞ BAŞARILI: ÇIKIŞ BUTONU ---
 authenticator.logout('Çıkış Yap', 'sidebar')
