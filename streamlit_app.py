@@ -97,6 +97,16 @@ def get_expenses(fetch_all=False, user_id=None):
     for doc in query:
         item = doc.to_dict()
         item['id'] = doc.id
+        
+        # --- GERİYE DÖNÜK UYUMLULUK (Eski test fişlerinin sistemi çökertmemesi için) ---
+        item['kategori'] = item.get('kategori', item.get('Kategori', 'Bilinmeyen'))
+        item['marka'] = item.get('marka', 'Bilinmeyen')
+        item['toplam_tutar'] = float(item.get('toplam_tutar', item.get('Toplam Tutar', 0.0)))
+        item['isletme'] = item.get('isletme', item.get('İşletme', 'Bilinmeyen'))
+        item['fis_no'] = item.get('fis_no', item.get('Fiş No', ''))
+        item['tarih'] = item.get('tarih', item.get('Tarih', ''))
+        item['kullanici_adi'] = item.get('kullanici_adi', item.get('username', 'Bilinmeyen'))
+        
         data.append(item)
     return data
 
@@ -156,6 +166,14 @@ def draw_dashboard(df_harcamalar, baslik_metni):
         st.info("Bu panoda henüz harcama verisi bulunmuyor.")
         return
 
+    # Sütun güvenlik kontrolü (Eski DataFrame hatalarını engellemek için)
+    if 'kategori' not in df_harcamalar.columns:
+        df_harcamalar['kategori'] = 'Bilinmeyen'
+    if 'marka' not in df_harcamalar.columns:
+        df_harcamalar['marka'] = 'Bilinmeyen'
+    if 'toplam_tutar' not in df_harcamalar.columns:
+        df_harcamalar['toplam_tutar'] = 0.0
+
     # Kategori ve Marka bazlı harcama toplamları
     harcama_ozeti = df_harcamalar.groupby(['kategori', 'marka'])['toplam_tutar'].sum().reset_index()
     
@@ -190,7 +208,7 @@ def draw_dashboard(df_harcamalar, baslik_metni):
             st.progress(yuzde_lin / 100, text=f"%{yuzde_lin:.1f} Kullanıldı")
         
         # Eğer ekstra bir ilaç eklenmiş ve harcama yapılmışsa alt tarafta uyarı olarak göster
-        diger_ilaclar = kat_harcamalari[~kat_harcamalari['marka'].isin(['Dapgeon', 'Liniga'])]
+        diger_ilaclar = kat_harcamalari[~kat_harcamalari['marka'].isin(['Dapgeon', 'Liniga', 'Bilinmeyen'])]
         if not diger_ilaclar.empty:
             for _, row in diger_ilaclar.iterrows():
                 st.warning(f"💊 **{row['marka']}** ilacı için bu kategoride {row['toplam_tutar']:,.2f} TL ekstra harcama girildi (Özel bütçe ayrılmamış).")
@@ -260,7 +278,6 @@ with tab_yeni:
                     kdv_orani = st.number_input("KDV Oranı (%)", value=float(ai_data.get("kdv_orani", 0.0)), step=1.0)
                     kdv_tutari = st.number_input("KDV Tutarı (TL)", value=float(ai_data.get("kdv_tutari", 0.0)), step=1.0)
                     
-                    # FİŞ BÖLME YOK! Sadece Kategori ve İlaç seçiliyor
                     secilen_kategori = st.selectbox("📌 Ana Kategori", list(st.session_state['kategoriler'].keys()))
                     secilen_marka = st.selectbox("💊 İlaç / Marka", st.session_state['markalar'])
 
@@ -279,7 +296,7 @@ with tab_yeni:
                             "harcama_turu": harcama_turu,
                             "kategori": secilen_kategori,
                             "marka": secilen_marka,
-                            "toplam_tutar": toplam_tutar, # Tutar bölünmeden tek parça kaydediliyor
+                            "toplam_tutar": toplam_tutar,
                             "kdv_orani": kdv_orani,
                             "kdv_tutari": kdv_tutari,
                             "gorsel_b64": img_base64,
