@@ -9,36 +9,41 @@ from datetime import datetime
 import firebase_admin
 from firebase_admin import credentials, firestore
 import streamlit_authenticator as stauth
-import yaml
-from yaml.loader import SafeLoader
 
 # --- SAYFA YAPILANDIRMASI ---
 st.set_page_config(page_title="Akıllı Masraf Portalı", layout="wide", page_icon="🧾")
 
 # --- KİMLİK DOĞRULAMA (LOGIN) SİSTEMİ ---
 try:
-    # Parolaları otomatik olarak şifrelemek (hash) için sözlüğü yeniden oluşturuyoruz
-    creds = {"usernames": {}}
-    for u_name, u_info in st.secrets["credentials"]["usernames"].items():
-        # Gizli boşluk karakterlerini temizliyoruz
+    # Secrets verilerini düzgün bir Python sözlüğüne dönüştürüp hash işlemi uyguluyoruz
+    credentials_dict = {"usernames": {}}
+    
+    # st.secrets'ten kullanıcı verilerini güvenle çekelim
+    users = dict(st.secrets["credentials"]["usernames"])
+    
+    for u_name, u_info in users.items():
+        # Düz şifreyi al ve gereksiz boşluklardan temizle
         plain_pass = str(u_info["password"]).strip()
-        # streamlit-authenticator v0.4.0+ uyumlu şifreleme metodu
+        
+        # Authenticator v0.4+ ile hash işlemi
         hashed_pass = stauth.Hasher.hash_passwords([plain_pass])[0]
         
-        creds["usernames"][u_name] = {
-            "email": u_info.get("email"),
-            "name": u_info.get("name"),
+        # Temiz ve şifrelenmiş sözlüğü oluştur
+        credentials_dict["usernames"][u_name] = {
+            "email": u_info.get("email", ""),
+            "name": u_info.get("name", u_name),
             "password": hashed_pass
         }
 
+    # Authenticator nesnesini yapılandır
     authenticator = stauth.Authenticate(
-        creds,
+        credentials_dict,
         st.secrets["cookie"]["name"],
         st.secrets["cookie"]["key"],
-        st.secrets["cookie"]["expiry_days"],
+        st.secrets["cookie"]["expiry_days"]
     )
     
-    # Streamlit-authenticator v0.4+ uyumlu login
+    # Giriş arayüzünü çağır
     authenticator.login()
 except Exception as e:
     st.error(f"Giriş sistemi yapılandırılamadı. Hata detayı: {e}")
@@ -225,55 +230,3 @@ with tab_yeni:
                             "toplam_tutar": toplam_tutar,
                             "kdv_orani": kdv_orani,
                             "kdv_tutari": kdv_tutari,
-                            "dapgeon_payi": dapgeon_payi,
-                            "liniga_payi": liniga_payi,
-                            "gorsel_b64": img_base64,
-                            "timestamp": firestore.SERVER_TIMESTAMP
-                        }
-                        
-                        db.collection('masraflar').add(yeni_kayit)
-                        st.success(f"Başarıyla kaydedildi! (Dapgeon: {dapgeon_payi} TL | Liniga: {liniga_payi} TL)")
-                        st.session_state['last_uploaded'] = None # Formu sıfırlamak için
-
-with tab_gecmis:
-    st.header(f"📊 {'Tüm Ekip Harcamaları (Admin Paneli)' if is_admin else 'Kendi Harcamalarınız'}")
-    
-    masraflar_list = get_expenses(is_admin=is_admin, user_id=username)
-    
-    if masraflar_list:
-        df = pd.DataFrame(masraflar_list)
-        # Sütunları düzenle
-        gosterilecek_sutunlar = ["tarih", "kullanici_adi", "isletme", "toplam_tutar", "kategori", "dapgeon_payi", "liniga_payi"]
-        df_gosterim = df[gosterilecek_sutunlar].copy()
-        
-        st.dataframe(df_gosterim, use_container_width=True)
-        
-        # Fiş Görselini Görme Alanı
-        st.divider()
-        st.subheader("🔍 Fiş Görseli Görüntüleme")
-        secilen_isletme = st.selectbox("Görselini görmek istediğiniz fişi seçin:", df['isletme'].tolist() + ["Seçiniz..."], index=len(df))
-        
-        if secilen_isletme != "Seçiniz...":
-            secilen_kayit = df[df['isletme'] == secilen_isletme].iloc[0]
-            if pd.notna(secilen_kayit.get('gorsel_b64')):
-                image_bytes = base64.b64decode(secilen_kayit['gorsel_b64'])
-                st.image(image_bytes, caption=f"{secilen_kayit['isletme']} - {secilen_kayit['toplam_tutar']} TL", width=400)
-            else:
-                st.warning("Bu fişe ait görsel bulunamadı.")
-                
-        # Bütçe Özeti (Sadece Admin için tüm bütçe)
-        if is_admin:
-            st.divider()
-            st.subheader("📈 Kategori Bazlı Bütçe Tüketimi (Tüm Ekip)")
-            kategori_toplam = df.groupby('kategori')['toplam_tutar'].sum().reset_index()
-            for _, row in kategori_toplam.iterrows():
-                kat = row['kategori']
-                harcanan = row['toplam_tutar']
-                limit = st.session_state['kategoriler'].get(kat, {}).get('limit', 0)
-                if limit > 0:
-                    yuzde = min((harcanan / limit) * 100, 100)
-                    kalan = limit - harcanan
-                    st.markdown(f"**{kat}:** {harcanan:,.2f} TL / {limit:,.2f} TL (Kalan: {kalan:,.2f} TL)")
-                    st.progress(yuzde / 100)
-    else:
-        st.info("Henüz sisteme kaydedilmiş bir fiş bulunmuyor.")
