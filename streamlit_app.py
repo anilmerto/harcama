@@ -304,7 +304,8 @@ def draw_dashboard(df_harcamalar, baslik_metni):
         fig = px.pie(grafik_df, values='toplam_tutar', names='İlaç', hole=0.4, 
                      title=f"{secilen_donem} İlaç Harcama Oranları")
         fig.update_traces(textposition='inside', textinfo='percent+label')
-        st.plotly_chart(fig, use_container_width=True)
+        # HATA DÜZELTİLDİ: key parametresi eklendi
+        st.plotly_chart(fig, use_container_width=True, key=f"pie_chart_{baslik_metni}")
 
 # --- ANA EKRAN SEKMELERİ ---
 if is_admin:
