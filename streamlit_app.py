@@ -278,4 +278,7 @@ with tab_gecmis:
                 if limit > 0:
                     yuzde = min((harcanan / limit) * 100, 100)
                     kalan = limit - harcanan
-                    st.markdown(f"**{kat}:** {harcanan:,.2f} TL / {limit
+                    st.markdown(f"**{kat}:** {harcanan:,.2f} TL / {limit:,.2f} TL (Kalan: {kalan:,.2f} TL)")
+                    st.progress(yuzde / 100)
+    else:
+        st.info("Henüz sisteme kaydedilmiş bir fiş bulunmuyor.")
