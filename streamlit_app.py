@@ -11,6 +11,7 @@ from firebase_admin import credentials, firestore
 import streamlit_authenticator as stauth
 import plotly.express as px
 from fpdf import FPDF
+import re
 
 # --- SAYFA YAPILANDIRMASI ---
 st.set_page_config(page_title="Akıllı Masraf Portalı", layout="wide", page_icon="🧾")
@@ -126,15 +127,12 @@ def get_expenses(fetch_all=False, user_id=None):
         item['id'] = doc.id
         
         item['kategori'] = item.get('kategori', item.get('Kategori', 'Bilinmeyen'))
-        # Eski kayıtları korumak ve yeni UI ile uyumlu yapmak için 'marka'yı 'İlaç' olarak atıyoruz
         item['İlaç'] = item.get('marka', item.get('İlaç', 'Bilinmeyen'))
         item['toplam_tutar'] = float(item.get('toplam_tutar', item.get('Toplam Tutar', 0.0)))
         item['isletme'] = item.get('isletme', item.get('İşletme', 'Bilinmeyen'))
         item['fis_no'] = item.get('fis_no', item.get('Fiş No', ''))
         item['tarih'] = item.get('tarih', item.get('Tarih', ''))
         item['kullanici_adi'] = item.get('kullanici_adi', item.get('username', 'Bilinmeyen'))
-        
-        # Dönem bilgisini tarihe göre hesapla
         item['Dönem'] = get_donem(item['tarih'])
         
         data.append(item)
@@ -152,19 +150,16 @@ def create_pdf_report(df, donem, isim):
     pdf = FPDF()
     pdf.add_page()
     
-    # Başlık
     pdf.set_font("Arial", 'B', 16)
     pdf.cell(0, 10, safe_text(f"Harcama Raporu - {isim}"), ln=True, align='C')
     pdf.set_font("Arial", '', 12)
     pdf.cell(0, 10, safe_text(f"Donem: {donem}"), ln=True, align='C')
     pdf.ln(10)
     
-    # Özet
     toplam = df['toplam_tutar'].sum()
     pdf.cell(0, 10, safe_text(f"Toplam Harcama: {toplam:,.2f} TL"), ln=True)
     pdf.ln(5)
     
-    # Tablo Başlıkları
     pdf.set_font("Arial", 'B', 10)
     col_widths = [25, 35, 35, 65, 30]
     headers = ["Tarih", "Kategori", "Ilac", "Isletme", "Tutar(TL)"]
@@ -172,7 +167,6 @@ def create_pdf_report(df, donem, isim):
         pdf.cell(w, 10, h, border=1, align='C')
     pdf.ln()
     
-    # Tablo Satırları
     pdf.set_font("Arial", '', 9)
     for _, row in df.iterrows():
         pdf.cell(col_widths[0], 10, safe_text(row['tarih']), border=1)
@@ -182,7 +176,8 @@ def create_pdf_report(df, donem, isim):
         pdf.cell(col_widths[4], 10, f"{row['toplam_tutar']:,.2f}", border=1, align='R')
         pdf.ln()
         
-    return pdf.output(dest='S').encode('latin-1', 'ignore')
+    # PDF'yi güvenli bytes formatına çevir (Telefonda indirme hatasını engeller)
+    return bytes(pdf.output(dest='S').encode('latin-1', 'ignore'))
 
 # --- VERİ VE AYAR YÖNETİMİ ---
 if 'kategoriler' not in st.session_state:
@@ -241,22 +236,25 @@ def draw_dashboard(df_harcamalar, baslik_metni):
 
     # Dönem Seçimi
     donemler = sorted(df_harcamalar['Dönem'].unique(), reverse=True)
-    secilen_donem = st.selectbox(f"📅 İncelenecek Dönemi Seçin", donemler, key=baslik_metni)
+    secilen_donem = st.selectbox(f"📅 İncelenecek Dönemi Seçin", donemler, key=f"donem_secici_{baslik_metni}")
     
-    # Veriyi Sadece Seçilen Döneme Göre Filtrele
     df_secili = df_harcamalar[df_harcamalar['Dönem'] == secilen_donem]
     
     if df_secili.empty:
         st.warning("Bu dönemde hiç harcama bulunamadı.")
         return
 
-    # PDF Rapor İndirme Butonu
+    # PDF Rapor İndirme Butonu (Dosya ismi temizlenmiş haliyle)
     isim_temiz = baslik_metni.replace("👤 ", "").replace("👑 ", "")
+    safe_isim = re.sub(r'[^A-Za-z0-9_]', '', isim_temiz.replace(' ', '_'))
+    safe_donem = re.sub(r'[^A-Za-z0-9_]', '', secilen_donem.replace(' ', '_'))
+    dosya_adi = f"Harcama_Raporu_{safe_isim}_{safe_donem}.pdf"
+    
     pdf_bytes = create_pdf_report(df_secili, secilen_donem, isim_temiz)
     st.download_button(
         label="📄 Bu Dönemin Raporunu İndir (PDF)",
         data=pdf_bytes,
-        file_name=f"Harcama_Raporu_{isim_temiz.replace(' ', '_')}_{secilen_donem.replace(' ', '_')}.pdf",
+        file_name=dosya_adi,
         mime="application/pdf"
     )
     st.divider()
@@ -304,20 +302,40 @@ def draw_dashboard(df_harcamalar, baslik_metni):
         fig = px.pie(grafik_df, values='toplam_tutar', names='İlaç', hole=0.4, 
                      title=f"{secilen_donem} İlaç Harcama Oranları")
         fig.update_traces(textposition='inside', textinfo='percent+label')
-        # HATA DÜZELTİLDİ: key parametresi eklendi
         st.plotly_chart(fig, use_container_width=True, key=f"pie_chart_{baslik_metni}")
 
-# --- ANA EKRAN SEKMELERİ ---
+# --- ANA EKRAN SEKMELERİ (SIRALAMA DEĞİŞTİ: ÖNCE DASHBOARD) ---
 if is_admin:
-    tabs = st.tabs(["➕ Yeni Fiş Yükle", "👤 Kendi Harcamalarım", "👑 Tüm Ekip (Admin Paneli)"])
-    tab_yeni, tab_kisisel, tab_ekip = tabs
+    tabs = st.tabs(["👤 Kendi Harcamalarım", "➕ Yeni Fiş Yükle", "👑 Tüm Ekip (Admin Paneli)"])
+    tab_kisisel, tab_yeni, tab_ekip = tabs
 else:
-    tabs = st.tabs(["➕ Yeni Fiş Yükle", "👤 Kendi Harcamalarım"])
-    tab_yeni, tab_kisisel = tabs[0], tabs[1]
+    tabs = st.tabs(["👤 Kendi Harcamalarım", "➕ Yeni Fiş Yükle"])
+    tab_kisisel, tab_yeni = tabs[0], tabs[1]
 
-# --- 1. SEKME: YENİ FİŞ YÜKLEME ---
+# --- 1. SEKME: KİŞİSEL PANEL (VARSAYILAN AÇILAN EKRAN) ---
+with tab_kisisel:
+    kisisel_masraflar = get_expenses(fetch_all=False, user_id=username)
+    df_kisisel = pd.DataFrame(kisisel_masraflar) if kisisel_masraflar else pd.DataFrame()
+    
+    draw_dashboard(df_kisisel, f"👤 {name} - Kişisel Bütçe Durumu")
+    
+    st.divider()
+    st.subheader("📋 Geçmiş Harcamalarınız")
+    if not df_kisisel.empty:
+        gosterilecek_sutunlar = ["Dönem", "tarih", "kategori", "İlaç", "isletme", "toplam_tutar", "fis_no"]
+        st.dataframe(df_kisisel[gosterilecek_sutunlar], use_container_width=True)
+        
+        secilen_isletme_kisisel = st.selectbox("Görselini görmek istediğiniz fişi seçin:", df_kisisel['isletme'].tolist() + ["Seçiniz..."], index=len(df_kisisel))
+        if secilen_isletme_kisisel != "Seçiniz...":
+            kayit = df_kisisel[df_kisisel['isletme'] == secilen_isletme_kisisel].iloc[0]
+            if pd.notna(kayit.get('gorsel_b64')):
+                st.image(base64.b64decode(kayit['gorsel_b64']), caption=f"{kayit['isletme']} - {kayit['toplam_tutar']} TL", width=400)
+    else:
+        st.info("Henüz kaydettiğiniz bir fiş bulunmuyor.")
+
+# --- 2. SEKME: YENİ FİŞ YÜKLEME ---
 with tab_yeni:
-    st.markdown("Fiş fotoğrafını yüklediğiniz an yapay zeka otomatik olarak okuyacaktır.")
+    st.markdown("Fiş fotoğrafını yüklediğiniz an yapay zeka otomatik olarak okuyacak, uygun ilaç ve kategoriyi kendi atayacaktır.")
     uploaded_file = st.file_uploader("Fiş veya Fatura Fotoğrafı Yükle", type=['png', 'jpg', 'jpeg'])
 
     if uploaded_file is not None:
@@ -331,6 +349,9 @@ with tab_yeni:
             st.subheader("🤖 Yapay Zeka Analizi ve Giriş Formu")
             
             file_bytes = uploaded_file.getvalue()
+            mevcut_kategoriler = list(st.session_state['kategoriler'].keys())
+            mevcut_markalar = st.session_state['markalar']
+            
             if st.session_state.get('last_uploaded') != file_bytes:
                 st.session_state['last_uploaded'] = file_bytes
                 st.session_state['ai_data'] = {} 
@@ -338,19 +359,29 @@ with tab_yeni:
                 with st.spinner("Yapay zeka fişi inceliyor, lütfen bekleyin..."):
                     try:
                         model = genai.GenerativeModel('gemini-2.5-flash')
-                        prompt = """
-                        Bu fiş/fatura görüntüsünü analiz et ve aşağıdaki bilgileri çıkar. Sadece geçerli bir JSON formatında yanıt ver. 
-                        Format: {"isletme": "Ad", "fis_no": "No", "tarih": "GG.AA.YYYY", "harcama_turu": "Tür", "toplam_tutar": 150.50, "kdv_orani": 10, "kdv_tutari": 15.05}
-                        Tutar ve KDV kısımları kesinlikle sayı (float) olmalıdır. Tarih mutlaka GG.AA.YYYY formatında olmalıdır.
+                        prompt = f"""
+                        Bu fiş/fatura görüntüsünü analiz et ve bilgileri çıkar. Geçerli bir JSON formatında yanıt ver. 
+                        Format: {{"isletme": "Ad", "fis_no": "No", "tarih": "GG.AA.YYYY", "harcama_turu": "Tür", "toplam_tutar": 150.50, "kdv_orani": 10, "kdv_tutari": 15.05, "kategori": "...", "marka": "..."}}
+                        
+                        ÖNEMLİ KURALLAR:
+                        1. Fişin içeriğine (yiyecek, otel, market vs.) bakarak en uygun Ana Kategoriyi seç. Şunlardan biri OLMALI: {mevcut_kategoriler}
+                        2. Fişin kime/neye ait olduğuna karar vererek en uygun İlacı/Markayı seç. Şunlardan biri OLMALI: {mevcut_markalar}
+                        (Eğer fiş bir yemek veya konaklama ise 'Temsil' veya 'Bölgesel' gibi kategoriler seçip, ilacı da en mantıklı olana atayabilirsin).
                         """
                         response = model.generate_content([prompt, image])
                         json_str = response.text.replace("```json", "").replace("```", "").strip()
                         st.session_state['ai_data'] = json.loads(json_str)
-                        st.success("Analiz başarılı! Lütfen Kategori ve İlaç seçimini yaparak kaydedin.")
+                        st.success("Analiz başarılı! Lütfen bilgileri kontrol edip 'Sisteme Kaydet' butonuna basın.")
                     except Exception as e:
                         st.error("Okuma sırasında hata oluştu. Lütfen bilgileri manuel giriniz.")
             
             ai_data = st.session_state.get('ai_data', {})
+            
+            # YZ'nin seçtiği kategori ve markayı form için bul
+            ai_kat = ai_data.get("kategori", mevcut_kategoriler[0])
+            ai_mar = ai_data.get("marka", mevcut_markalar[0])
+            idx_kat = mevcut_kategoriler.index(ai_kat) if ai_kat in mevcut_kategoriler else 0
+            idx_mar = mevcut_markalar.index(ai_mar) if ai_mar in mevcut_markalar else 0
             
             with st.form("masraf_formu"):
                 f_col1, f_col2 = st.columns(2)
@@ -364,56 +395,60 @@ with tab_yeni:
                     kdv_orani = st.number_input("KDV Oranı (%)", value=float(ai_data.get("kdv_orani", 0.0)), step=1.0)
                     kdv_tutari = st.number_input("KDV Tutarı (TL)", value=float(ai_data.get("kdv_tutari", 0.0)), step=1.0)
                     
-                    secilen_kategori = st.selectbox("📌 Ana Kategori", list(st.session_state['kategoriler'].keys()))
-                    secilen_marka = st.selectbox("💊 İlaç Seçimi", st.session_state['markalar'])
+                    secilen_kategori = st.selectbox("📌 Ana Kategori", mevcut_kategoriler, index=idx_kat)
+                    secilen_marka = st.selectbox("💊 İlaç Seçimi", mevcut_markalar, index=idx_mar)
 
                 submit_button = st.form_submit_button("Sisteme Kaydet")
                 
                 if submit_button and toplam_tutar > 0:
-                    with st.spinner("Veritabanına kaydediliyor..."):
-                        img_base64 = compress_and_encode_image(image)
+                    # 200 TL LİMİT AŞIMI KONTROLÜ
+                    aktif_donem = get_donem(tarih)
+                    
+                    # Kullanıcının bu dönem, bu kategori ve ilaçtaki harcamasını hesapla
+                    df_kontrol = pd.DataFrame(kisisel_masraflar) if kisisel_masraflar else pd.DataFrame()
+                    if not df_kontrol.empty:
+                        df_donem = df_kontrol[df_kontrol['Dönem'] == aktif_donem]
+                        mevcut_harcanan = df_donem[(df_donem['kategori'] == secilen_kategori) & (df_donem['İlaç'] == secilen_marka)]['toplam_tutar'].sum()
+                    else:
+                        mevcut_harcanan = 0.0
                         
-                        yeni_kayit = {
-                            "username": username,
-                            "kullanici_adi": name,
-                            "tarih": tarih,
-                            "isletme": isletme,
-                            "fis_no": fis_no,
-                            "harcama_turu": harcama_turu,
-                            "kategori": secilen_kategori,
-                            "marka": secilen_marka, # Veritabanında marka olarak tutulur, İlaç olarak gösterilir
-                            "toplam_tutar": toplam_tutar,
-                            "kdv_orani": kdv_orani,
-                            "kdv_tutari": kdv_tutari,
-                            "gorsel_b64": img_base64,
-                            "timestamp": firestore.SERVER_TIMESTAMP
-                        }
+                    kategori_ayari = st.session_state['kategoriler'][secilen_kategori]
+                    
+                    if secilen_marka == 'Dapgeon':
+                        butce_limiti = kategori_ayari['limit'] * (kategori_ayari['dapgeon_oran'] / 100)
+                    elif secilen_marka == 'Liniga':
+                        butce_limiti = kategori_ayari['limit'] * (kategori_ayari['liniga_oran'] / 100)
+                    else:
+                        butce_limiti = 0 # Diğer ilaçların standart bir limiti yok
                         
-                        db.collection('masraflar').add(yeni_kayit)
-                        st.success(f"✅ Başarıyla Kaydedildi! Dönem: {get_donem(tarih)}")
-                        st.session_state['last_uploaded'] = None 
-
-# --- 2. SEKME: KİŞİSEL PANEL ---
-with tab_kisisel:
-    kisisel_masraflar = get_expenses(fetch_all=False, user_id=username)
-    df_kisisel = pd.DataFrame(kisisel_masraflar) if kisisel_masraflar else pd.DataFrame()
-    
-    draw_dashboard(df_kisisel, f"👤 {name} - Kişisel Bütçe Durumu")
-    
-    st.divider()
-    st.subheader("📋 Geçmiş Harcamalarınız")
-    if not df_kisisel.empty:
-        # Eski sistemdeki marka yazısını İlaç olarak değiştirdik
-        gosterilecek_sutunlar = ["Dönem", "tarih", "kategori", "İlaç", "isletme", "toplam_tutar", "fis_no"]
-        st.dataframe(df_kisisel[gosterilecek_sutunlar], use_container_width=True)
-        
-        secilen_isletme_kisisel = st.selectbox("Görselini görmek istediğiniz fişi seçin:", df_kisisel['isletme'].tolist() + ["Seçiniz..."], index=len(df_kisisel))
-        if secilen_isletme_kisisel != "Seçiniz...":
-            kayit = df_kisisel[df_kisisel['isletme'] == secilen_isletme_kisisel].iloc[0]
-            if pd.notna(kayit.get('gorsel_b64')):
-                st.image(base64.b64decode(kayit['gorsel_b64']), caption=f"{kayit['isletme']} - {kayit['toplam_tutar']} TL", width=400)
-    else:
-        st.info("Henüz kaydettiğiniz bir fiş bulunmuyor.")
+                    kalan_butce = butce_limiti - mevcut_harcanan
+                    
+                    # Eğer kalan bütçe + 200 TL'yi de aşıyorsa KABUL ETME
+                    if secilen_marka in ['Dapgeon', 'Liniga'] and (toplam_tutar > kalan_butce + 200):
+                        st.error(f"❌ LİMİT AŞIMI! {secilen_marka} için kalan bütçeniz {kalan_butce:,.2f} TL. En fazla 200 TL esneme payı (aşım) yapabilirsiniz. Fiş tutarı çok yüksek!")
+                    else:
+                        with st.spinner("Veritabanına kaydediliyor..."):
+                            img_base64 = compress_and_encode_image(image)
+                            
+                            yeni_kayit = {
+                                "username": username,
+                                "kullanici_adi": name,
+                                "tarih": tarih,
+                                "isletme": isletme,
+                                "fis_no": fis_no,
+                                "harcama_turu": harcama_turu,
+                                "kategori": secilen_kategori,
+                                "marka": secilen_marka, 
+                                "toplam_tutar": toplam_tutar,
+                                "kdv_orani": kdv_orani,
+                                "kdv_tutari": kdv_tutari,
+                                "gorsel_b64": img_base64,
+                                "timestamp": firestore.SERVER_TIMESTAMP
+                            }
+                            
+                            db.collection('masraflar').add(yeni_kayit)
+                            st.success(f"✅ Başarıyla Kaydedildi! Dönem: {aktif_donem}")
+                            st.session_state['last_uploaded'] = None 
 
 # --- 3. SEKME: EKİP PANELİ (SADECE ADMİN) ---
 if is_admin:
