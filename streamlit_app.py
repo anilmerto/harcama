@@ -59,7 +59,7 @@ is_admin = (username == 'admin')
 # --- YAN PANEL: LOGO ---
 # Kendi logonuzu GitHub'a yükledikten sonra (örneğin logo.png), 
 # aşağıdaki adresi silip yerine "logo.png" yazabilirsiniz.
-st.sidebar.image("https://via.placeholder.com/300x100.png?text=Sirket+Logosu", use_container_width=True)
+st.sidebar.image("logo.png", use_container_width=True)
 st.sidebar.divider()
 
 # --- ÇIKIŞ BUTONU VE KARŞILAMA ---
