@@ -56,6 +56,12 @@ name = st.session_state.get("name")
 username = st.session_state.get("username")
 is_admin = (username == 'admin')
 
+# --- YAN PANEL: LOGO ---
+# Kendi logonuzu GitHub'a yükledikten sonra (örneğin logo.png), 
+# aşağıdaki adresi silip yerine "logo.png" yazabilirsiniz.
+st.sidebar.image("https://via.placeholder.com/300x100.png?text=Sirket+Logosu", use_container_width=True)
+st.sidebar.divider()
+
 # --- ÇIKIŞ BUTONU VE KARŞILAMA ---
 authenticator.logout('Çıkış Yap', 'sidebar')
 st.sidebar.write(f"Hoş geldin, *{name}* 👋")
@@ -364,9 +370,8 @@ with tab_yeni:
                         Format: {{"isletme": "Ad", "fis_no": "No", "tarih": "GG.AA.YYYY", "harcama_turu": "Tür", "toplam_tutar": 150.50, "kdv_orani": 10, "kdv_tutari": 15.05, "kategori": "...", "marka": "..."}}
                         
                         ÖNEMLİ KURALLAR:
-                        1. Fişin içeriğine (yiyecek, otel, market vs.) bakarak en uygun Ana Kategoriyi seç. Şunlardan biri OLMALI: {mevcut_kategoriler}
+                        1. Fişin içeriğine bakarak en uygun Ana Kategoriyi seç. Şunlardan biri OLMALI: {mevcut_kategoriler}
                         2. Fişin kime/neye ait olduğuna karar vererek en uygun İlacı/Markayı seç. Şunlardan biri OLMALI: {mevcut_markalar}
-                        (Eğer fiş bir yemek veya konaklama ise 'Temsil' veya 'Bölgesel' gibi kategoriler seçip, ilacı da en mantıklı olana atayabilirsin).
                         """
                         response = model.generate_content([prompt, image])
                         json_str = response.text.replace("```json", "").replace("```", "").strip()
