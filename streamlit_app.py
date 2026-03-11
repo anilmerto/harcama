@@ -59,7 +59,7 @@ is_admin = (username == 'admin')
 # --- YAN PANEL: LOGO ---
 # Kendi logonuzu GitHub'a yükledikten sonra (örneğin logo.png), 
 # aşağıdaki adresi silip yerine "logo.png" yazabilirsiniz.
-st.sidebar.image("logo.png", use_container_width=True)
+st.sidebar.image("https://via.placeholder.com/300x100.png?text=Sirket+Logosu", use_container_width=True)
 st.sidebar.divider()
 
 # --- ÇIKIŞ BUTONU VE KARŞILAMA ---
@@ -132,13 +132,20 @@ def get_expenses(fetch_all=False, user_id=None):
         item = doc.to_dict()
         item['id'] = doc.id
         
-        item['kategori'] = item.get('kategori', item.get('Kategori', 'Bilinmeyen'))
-        item['İlaç'] = item.get('marka', item.get('İlaç', 'Bilinmeyen'))
-        item['toplam_tutar'] = float(item.get('toplam_tutar', item.get('Toplam Tutar', 0.0)))
-        item['isletme'] = item.get('isletme', item.get('İşletme', 'Bilinmeyen'))
-        item['fis_no'] = item.get('fis_no', item.get('Fiş No', ''))
-        item['tarih'] = item.get('tarih', item.get('Tarih', ''))
-        item['kullanici_adi'] = item.get('kullanici_adi', item.get('username', 'Bilinmeyen'))
+        # KESİN ÇÖZÜM: Verilerin tiplerini garanti altına alıyoruz
+        item['kategori'] = str(item.get('kategori', item.get('Kategori', 'Bilinmeyen')))
+        item['İlaç'] = str(item.get('marka', item.get('İlaç', 'Bilinmeyen')))
+        
+        # Tutarın kesinlikle Float (sayı) olmasını sağlıyoruz
+        try:
+            item['toplam_tutar'] = float(item.get('toplam_tutar', item.get('Toplam Tutar', 0.0)))
+        except:
+            item['toplam_tutar'] = 0.0
+            
+        item['isletme'] = str(item.get('isletme', item.get('İşletme', 'Bilinmeyen')))
+        item['fis_no'] = str(item.get('fis_no', item.get('Fiş No', '')))
+        item['tarih'] = str(item.get('tarih', item.get('Tarih', '')))
+        item['kullanici_adi'] = str(item.get('kullanici_adi', item.get('username', 'Bilinmeyen')))
         item['Dönem'] = get_donem(item['tarih'])
         
         data.append(item)
@@ -182,8 +189,26 @@ def create_pdf_report(df, donem, isim):
         pdf.cell(col_widths[4], 10, f"{row['toplam_tutar']:,.2f}", border=1, align='R')
         pdf.ln()
         
-    # PDF'yi güvenli bytes formatına çevir (Telefonda indirme hatasını engeller)
     return bytes(pdf.output(dest='S').encode('latin-1', 'ignore'))
+
+# --- FİŞ SİLME VE DÜZENLEME FONKSİYONLARI ---
+def delete_expense(doc_id):
+    try:
+        db.collection('masraflar').document(doc_id).delete()
+        st.success("Fiş başarıyla silindi!")
+        return True
+    except Exception as e:
+        st.error(f"Silme hatası: {e}")
+        return False
+
+def update_expense(doc_id, yeni_veri):
+    try:
+        db.collection('masraflar').document(doc_id).update(yeni_veri)
+        st.success("Fiş başarıyla güncellendi!")
+        return True
+    except Exception as e:
+        st.error(f"Güncelleme hatası: {e}")
+        return False
 
 # --- VERİ VE AYAR YÖNETİMİ ---
 if 'kategoriler' not in st.session_state:
@@ -244,7 +269,7 @@ def draw_dashboard(df_harcamalar, baslik_metni):
     donemler = sorted(df_harcamalar['Dönem'].unique(), reverse=True)
     secilen_donem = st.selectbox(f"📅 İncelenecek Dönemi Seçin", donemler, key=f"donem_secici_{baslik_metni}")
     
-    df_secili = df_harcamalar[df_harcamalar['Dönem'] == secilen_donem]
+    df_secili = df_harcamalar[df_harcamalar['Dönem'] == secilen_donem].copy() # Copy ile setting with copy warning'i engelliyoruz
     
     if df_secili.empty:
         st.warning("Bu dönemde hiç harcama bulunamadı.")
@@ -310,6 +335,70 @@ def draw_dashboard(df_harcamalar, baslik_metni):
         fig.update_traces(textposition='inside', textinfo='percent+label')
         st.plotly_chart(fig, use_container_width=True, key=f"pie_chart_{baslik_metni}")
 
+# --- YENİ EKLENEN FİŞ DÜZENLEME ARAYÜZÜ FONKSİYONU ---
+def render_edit_interface(df, prefix_key):
+    st.subheader("✏️ Fiş Düzenle veya Sil")
+    st.info("Geçmişte girdiğiniz hatalı fişleri buradan düzeltebilir veya tamamen silebilirsiniz.")
+    
+    # Düzenlenecek fişi seçmek için dropdown (İşletme Adı - Tutar - Tarih)
+    df['secim_metni'] = df['isletme'] + " - " + df['toplam_tutar'].astype(str) + " TL (" + df['tarih'] + ")"
+    secim_listesi = ["Bir fiş seçin..."] + df['secim_metni'].tolist()
+    
+    secilen_metin = st.selectbox("Düzenlenecek Fişi Seçin:", secim_listesi, key=f"edit_select_{prefix_key}")
+    
+    if secilen_metin != "Bir fiş seçin...":
+        # Seçilen fişin tüm verilerini bul
+        secilen_kayit = df[df['secim_metni'] == secilen_metin].iloc[0]
+        doc_id = secilen_kayit['id']
+        
+        with st.form(key=f"edit_form_{prefix_key}"):
+            st.write(f"**{secilen_kayit['isletme']}** isimli fişi düzenliyorsunuz:")
+            
+            c1, c2 = st.columns(2)
+            with c1:
+                y_isletme = st.text_input("İşletme Adı", value=secilen_kayit['isletme'])
+                y_tarih = st.text_input("Tarih (GG.AA.YYYY)", value=secilen_kayit['tarih'])
+                
+                # İlaç (Marka) ve Kategori listelerinde mevcut değeri bulup varsayılan yapma
+                mevcut_kategoriler = list(st.session_state['kategoriler'].keys())
+                mevcut_markalar = st.session_state['markalar']
+                
+                idx_kat = mevcut_kategoriler.index(secilen_kayit['kategori']) if secilen_kayit['kategori'] in mevcut_kategoriler else 0
+                idx_mar = mevcut_markalar.index(secilen_kayit['İlaç']) if secilen_kayit['İlaç'] in mevcut_markalar else 0
+                
+                y_kategori = st.selectbox("Ana Kategori", mevcut_kategoriler, index=idx_kat)
+            
+            with c2:
+                y_tutar = st.number_input("Toplam Tutar (TL)", value=float(secilen_kayit['toplam_tutar']), step=10.0)
+                y_ilac = st.selectbox("İlaç Seçimi", mevcut_markalar, index=idx_mar)
+                y_fis_no = st.text_input("Fiş No", value=secilen_kayit['fis_no'])
+                
+            c_btn1, c_btn2, c_btn3 = st.columns([1, 1, 2])
+            with c_btn1:
+                btn_guncelle = st.form_submit_button("💾 Güncelle", type="primary")
+            with c_btn2:
+                btn_sil = st.form_submit_button("🗑️ Sil")
+                
+            if btn_guncelle:
+                yeni_veri = {
+                    "isletme": y_isletme,
+                    "tarih": y_tarih,
+                    "kategori": y_kategori,
+                    "marka": y_ilac, # Veritabanında marka olarak geçiyor
+                    "toplam_tutar": float(y_tutar), # Kesinlikle float olarak güncellenir
+                    "fis_no": y_fis_no
+                }
+                if update_expense(doc_id, yeni_veri):
+                    st.rerun()
+                    
+            if btn_sil:
+                if delete_expense(doc_id):
+                    st.rerun()
+                    
+        # Görseli de gösterelim ki kullanıcı neyi düzenlediğini bilsin
+        if pd.notna(secilen_kayit.get('gorsel_b64')):
+            st.image(base64.b64decode(secilen_kayit['gorsel_b64']), caption="Fiş Görseli", width=300)
+
 # --- ANA EKRAN SEKMELERİ (SIRALAMA DEĞİŞTİ: ÖNCE DASHBOARD) ---
 if is_admin:
     tabs = st.tabs(["👤 Kendi Harcamalarım", "➕ Yeni Fiş Yükle", "👑 Tüm Ekip (Admin Paneli)"])
@@ -331,11 +420,10 @@ with tab_kisisel:
         gosterilecek_sutunlar = ["Dönem", "tarih", "kategori", "İlaç", "isletme", "toplam_tutar", "fis_no"]
         st.dataframe(df_kisisel[gosterilecek_sutunlar], use_container_width=True)
         
-        secilen_isletme_kisisel = st.selectbox("Görselini görmek istediğiniz fişi seçin:", df_kisisel['isletme'].tolist() + ["Seçiniz..."], index=len(df_kisisel))
-        if secilen_isletme_kisisel != "Seçiniz...":
-            kayit = df_kisisel[df_kisisel['isletme'] == secilen_isletme_kisisel].iloc[0]
-            if pd.notna(kayit.get('gorsel_b64')):
-                st.image(base64.b64decode(kayit['gorsel_b64']), caption=f"{kayit['isletme']} - {kayit['toplam_tutar']} TL", width=400)
+        # YENİ EKLENEN: Kişisel fişleri düzenleme alanı
+        st.divider()
+        render_edit_interface(df_kisisel, prefix_key="kisisel")
+        
     else:
         st.info("Henüz kaydettiğiniz bir fiş bulunmuyor.")
 
@@ -409,7 +497,6 @@ with tab_yeni:
                     # 200 TL LİMİT AŞIMI KONTROLÜ
                     aktif_donem = get_donem(tarih)
                     
-                    # Kullanıcının bu dönem, bu kategori ve ilaçtaki harcamasını hesapla
                     df_kontrol = pd.DataFrame(kisisel_masraflar) if kisisel_masraflar else pd.DataFrame()
                     if not df_kontrol.empty:
                         df_donem = df_kontrol[df_kontrol['Dönem'] == aktif_donem]
@@ -424,11 +511,10 @@ with tab_yeni:
                     elif secilen_marka == 'Liniga':
                         butce_limiti = kategori_ayari['limit'] * (kategori_ayari['liniga_oran'] / 100)
                     else:
-                        butce_limiti = 0 # Diğer ilaçların standart bir limiti yok
+                        butce_limiti = 0 
                         
                     kalan_butce = butce_limiti - mevcut_harcanan
                     
-                    # Eğer kalan bütçe + 200 TL'yi de aşıyorsa KABUL ETME
                     if secilen_marka in ['Dapgeon', 'Liniga'] and (toplam_tutar > kalan_butce + 200):
                         st.error(f"❌ LİMİT AŞIMI! {secilen_marka} için kalan bütçeniz {kalan_butce:,.2f} TL. En fazla 200 TL esneme payı (aşım) yapabilirsiniz. Fiş tutarı çok yüksek!")
                     else:
@@ -444,9 +530,9 @@ with tab_yeni:
                                 "harcama_turu": harcama_turu,
                                 "kategori": secilen_kategori,
                                 "marka": secilen_marka, 
-                                "toplam_tutar": toplam_tutar,
-                                "kdv_orani": kdv_orani,
-                                "kdv_tutari": kdv_tutari,
+                                "toplam_tutar": float(toplam_tutar), # Kesinlikle float kaydet
+                                "kdv_orani": float(kdv_orani),
+                                "kdv_tutari": float(kdv_tutari),
                                 "gorsel_b64": img_base64,
                                 "timestamp": firestore.SERVER_TIMESTAMP
                             }
@@ -454,6 +540,7 @@ with tab_yeni:
                             db.collection('masraflar').add(yeni_kayit)
                             st.success(f"✅ Başarıyla Kaydedildi! Dönem: {aktif_donem}")
                             st.session_state['last_uploaded'] = None 
+                            st.rerun() # Kayıttan sonra sayfayı yenile ki dashboard güncellensin
 
 # --- 3. SEKME: EKİP PANELİ (SADECE ADMİN) ---
 if is_admin:
@@ -469,13 +556,9 @@ if is_admin:
             gosterilecek_sutunlar_admin = ["Dönem", "kullanici_adi", "tarih", "kategori", "İlaç", "isletme", "toplam_tutar", "fis_no"]
             st.dataframe(df_tum[gosterilecek_sutunlar_admin], use_container_width=True)
             
-            df_tum['secim_metni'] = df_tum['kullanici_adi'] + " - " + df_tum['isletme'] + " (" + df_tum['toplam_tutar'].astype(str) + " TL)"
-            secim_listesi = df_tum['secim_metni'].tolist() + ["Seçiniz..."]
+            # YENİ EKLENEN: Tüm ekibin fişlerini düzenleme alanı (Sadece Admin görebilir)
+            st.divider()
+            render_edit_interface(df_tum, prefix_key="admin")
             
-            secilen_isletme_admin = st.selectbox("Görselini görmek istediğiniz fişi seçin (Ekip):", secim_listesi, index=len(secim_listesi)-1)
-            if secilen_isletme_admin != "Seçiniz...":
-                kayit = df_tum[df_tum['secim_metni'] == secilen_isletme_admin].iloc[0]
-                if pd.notna(kayit.get('gorsel_b64')):
-                    st.image(base64.b64decode(kayit['gorsel_b64']), caption=secilen_isletme_admin, width=400)
         else:
             st.info("Sistemde kayıtlı fiş bulunmuyor.")
