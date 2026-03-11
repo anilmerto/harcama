@@ -20,37 +20,36 @@ from email.mime.multipart import MIMEMultipart
 # --- SAYFA YAPILANDIRMASI ---
 st.set_page_config(page_title="Genveon Masraf Portalı", layout="wide", page_icon="🧾")
 
-# --- GELİŞMİŞ MOBİL UYUM & TÜRKÇELEŞTİRME CSS ---
+# --- GELİŞMİŞ MOBİL UYUM & GENEL TASARIM CSS ---
 st.markdown("""
     <style>
-        /* Ana Gövdeyi Ortala ve Mobil Uygulama Hissi Ver */
+        /* Ana Gövdeyi Ortala ve Klasik Web Sitesi Hissi Ver */
         .block-container {
-            max-width: 1000px !important;
+            max-width: 1050px !important;
             padding-top: 2rem !important;
         }
         
-        /* Sekmeleri Ortala */
+        /* Sekmeleri (Menüyü) Ortala ve Büyüt */
         .stTabs [data-baseweb="tab-list"] {
             justify-content: center;
-            gap: 10px;
+            gap: 15px;
+            border-bottom: 2px solid #f0f2f6;
         }
         .stTabs [data-baseweb="tab"] {
-            font-size: 1rem;
-            padding: 10px 15px;
-            border-radius: 8px 8px 0 0;
+            font-size: 1.1rem;
+            padding: 12px 20px;
+            font-weight: 500;
         }
         
-        /* Mobilde Logo ve Metinleri Küçült/Ortala */
+        /* Mobilde Logo ve Metinleri Ortala */
         @media (max-width: 768px) {
-            .mobile-center {
+            [data-testid="stImage"] {
                 display: flex;
                 justify-content: center;
                 align-items: center;
-                text-align: center;
-                width: 100%;
             }
-            .mobile-center img {
-                max-width: 140px !important; /* Logoyu küçült */
+            [data-testid="stImage"] img {
+                max-width: 160px !important; 
                 height: auto;
             }
             .kurumsal-baslik {
@@ -72,25 +71,12 @@ st.markdown("""
             margin-bottom: 30px;
             letter-spacing: 1px;
         }
-
-        /* --- LOGIN EKRANI İNGİLİZCE KELİMELERİ TÜRKÇELEŞTİRME HACK --- */
-        /* Login Butonu */
-        [data-testid="stFormSubmitButton"] button p { visibility: hidden; position: relative; }
-        [data-testid="stFormSubmitButton"] button p::after {
-            visibility: visible;
-            content: "Sisteme Giriş Yap";
-            position: absolute;
-            left: 50%;
-            transform: translateX(-50%);
-            width: 100%;
-        }
     </style>
 """, unsafe_allow_html=True)
 
 # --- OTOMATİK E-POSTA FONKSİYONU ---
 def send_email_to_admin(konu, mesaj):
     try:
-        # st.secrets'te email ayarları varsa çalışır, yoksa sadece veritabanına yazar
         sender_email = st.secrets["email"]["address"]
         sender_pass = st.secrets["email"]["password"]
         receiver_email = "anilmertocak@gmail.com"
@@ -106,8 +92,7 @@ def send_email_to_admin(konu, mesaj):
         server.login(sender_email, sender_pass)
         server.send_message(msg)
         server.quit()
-    except Exception as e:
-        # Mail gönderilemezse sessizce geç
+    except Exception:
         pass
 
 # --- FIREBASE VERİTABANI BAĞLANTISI ---
@@ -181,42 +166,52 @@ except Exception as e:
 
 auth_status = st.session_state.get("authentication_status")
 
-# GİRİŞ EKRANI TASARIMI (Ortalanmış ve Kurumsal)
+# --- GİRİŞ EKRANI TASARIMI VE İZOLE EDİLMİŞ CSS HACK ---
 if auth_status is not True:
-    st.markdown("<div class='mobile-center' style='margin-bottom: 20px;'>", unsafe_allow_html=True)
+    
+    # KESİN ÇÖZÜM: İngilizce Login yazısını çeviren CSS, DİĞER BUTONLARI BOZMASIN DİYE SADECE BURADA ÇALIŞIR!
+    st.markdown("""
+        <style>
+            [data-testid="stFormSubmitButton"] button p { font-size: 0px !important; }
+            [data-testid="stFormSubmitButton"] button p::before {
+                content: "Sisteme Giriş Yap";
+                font-size: 16px !important;
+                visibility: visible;
+            }
+        </style>
+    """, unsafe_allow_html=True)
+    
+    st.markdown("<div style='display:flex; justify-content:center; margin-bottom: 20px;'>", unsafe_allow_html=True)
     try:
         if os.path.exists("logo.png"):
             st.image("logo.png", width=250)
         else:
-            st.markdown("<h1 style='color: #3498db;'>GENVEON</h1>", unsafe_allow_html=True)
+            st.markdown("<h1 style='color: #3498db; text-align: center;'>GENVEON</h1>", unsafe_allow_html=True)
     except:
-        st.markdown("<h1 style='color: #3498db;'>GENVEON</h1>", unsafe_allow_html=True)
+        st.markdown("<h1 style='color: #3498db; text-align: center;'>GENVEON</h1>", unsafe_allow_html=True)
     st.markdown("</div>", unsafe_allow_html=True)
     
     st.markdown("<div class='kurumsal-baslik'>Masraf Takip Uygulaması</div>", unsafe_allow_html=True)
     
-    # Giriş formu için daraltılmış temiz alan
     col1, col2, col3 = st.columns([1, 2, 1])
     with col2:
         authenticator.login()
     st.stop()
 
-# --- GİRİŞ BAŞARILI SONRASI (ÜST NAVİGASYON) ---
+# --- GİRİŞ BAŞARILI SONRASI (ÜST NAVİGASYON / LOGO) ---
 name = st.session_state.get("name")
 username = st.session_state.get("username")
 is_admin = (username == 'admin')
 
 col_logo, col_space, col_user = st.columns([2, 1, 2])
 with col_logo:
-    st.markdown("<div class='mobile-center' style='justify-content: flex-start;'>", unsafe_allow_html=True)
     try:
         if os.path.exists("logo.png"):
-            st.image("logo.png", width=150)
+            st.image("logo.png", width=180)
         else:
             st.markdown("<h3 style='color: #3498db; margin:0;'>GENVEON</h3>", unsafe_allow_html=True)
     except:
         pass
-    st.markdown("</div>", unsafe_allow_html=True)
 
 with col_user:
     st.markdown(f"<div style='text-align: right; padding-top:10px;'>Hoş geldin, <b>{name}</b></div>", unsafe_allow_html=True)
@@ -350,6 +345,54 @@ def create_pdf_report(df, donem, isim):
         pdf.ln()
     return bytes(pdf.output(dest='S').encode('latin-1', 'ignore'))
 
+# --- FİŞ DÜZENLEME ARAYÜZÜ (Kusursuz Görünüm İçin) ---
+def render_edit_interface(df, prefix_key):
+    st.markdown("#### ✏️ Fiş Düzenle veya Sil")
+    df['secim_metni'] = df['isletme'] + " - " + df['toplam_tutar'].astype(str) + " TL (" + df['tarih'] + ")"
+    secim_listesi = ["Bir fiş seçin..."] + df['secim_metni'].tolist()
+    
+    secilen_metin = st.selectbox("İşlem yapılacak fişi seçin:", secim_listesi, key=f"edit_select_{prefix_key}")
+    
+    if secilen_metin != "Bir fiş seçin...":
+        secilen_kayit = df[df['secim_metni'] == secilen_metin].iloc[0]
+        doc_id = secilen_kayit['id']
+        
+        with st.form(key=f"edit_form_{prefix_key}"):
+            c1, c2 = st.columns(2)
+            y_isletme = c1.text_input("İşletme Adı", secilen_kayit['isletme'])
+            y_tarih = c1.text_input("Tarih (GG.AA.YYYY)", secilen_kayit['tarih'])
+            
+            mevcut_kats = list(kategoriler.keys())
+            idx_k = mevcut_kats.index(secilen_kayit['kategori']) if secilen_kayit['kategori'] in mevcut_kats else 0
+            y_kategori = c1.selectbox("Kategori", mevcut_kats, index=idx_k)
+            
+            y_tutar = c2.number_input("Tutar (TL)", float(secilen_kayit['toplam_tutar']), step=10.0)
+            idx_m = markalar.index(secilen_kayit['İlaç']) if secilen_kayit['İlaç'] in markalar else 0
+            y_ilac = c2.selectbox("İlaç", markalar, index=idx_m)
+            y_fis = c2.text_input("Fiş No", secilen_kayit['fis_no'])
+            
+            st.write("") # Boşluk
+            
+            # GÜNCELLENMİŞ BUTON YERLEŞİMİ (Artık CSS'den etkilenmez ve çok şık görünür)
+            col_b1, col_b2 = st.columns(2)
+            btn_guncelle = col_b1.form_submit_button("💾 Güncelle", use_container_width=True, type="primary")
+            btn_sil = col_b2.form_submit_button("🗑️ Sil", use_container_width=True)
+            
+            if btn_guncelle:
+                db.collection('masraflar').document(doc_id).update({
+                    "isletme": y_isletme, "tarih": y_tarih, "kategori": y_kategori,
+                    "marka": y_ilac, "toplam_tutar": float(y_tutar), "fis_no": y_fis
+                })
+                st.success("Fiş başarıyla güncellendi!")
+                st.rerun()
+            if btn_sil:
+                db.collection('masraflar').document(doc_id).delete()
+                st.success("Fiş tamamen silindi!")
+                st.rerun()
+                
+        if pd.notna(secilen_kayit.get('gorsel_b64')):
+            st.image(base64.b64decode(secilen_kayit['gorsel_b64']), caption="Seçili Fiş Görseli", width=300)
+
 # --- DASHBOARD ÇİZİM FONKSİYONU ---
 def draw_dashboard(df_harcamalar, baslik_metni):
     st.markdown(f"<h2 style='text-align: center;'>{baslik_metni}</h2>", unsafe_allow_html=True)
@@ -369,7 +412,7 @@ def draw_dashboard(df_harcamalar, baslik_metni):
     mevcut_kat_listesi = list(kategoriler.keys())
     unmapped_df = df_secili[~df_secili['kategori'].isin(mevcut_kat_listesi)]
     if not unmapped_df.empty:
-        st.error("⚠️ DİKKAT: Aşağıdaki harcamaların kategorisi uyuşmuyor. Fiş düzenle kısmından güncelleyin.")
+        st.error("⚠️ DİKKAT: Aşağıdaki harcamaların kategorisi sistemdeki bütçelerle uyuşmuyor. Lütfen aşağıdaki sayfadan güncelleyin.")
         st.dataframe(unmapped_df[['tarih', 'kategori', 'İlaç', 'isletme', 'toplam_tutar']], use_container_width=True)
 
     st.markdown("### ⏱️ Hızlı Dönem Özeti")
@@ -433,34 +476,17 @@ else:
 with tab_kisisel:
     kisisel_masraflar = get_expenses(fetch_all=False, user_id=username)
     df_kisisel = pd.DataFrame(kisisel_masraflar) if kisisel_masraflar else pd.DataFrame()
-    draw_dashboard(df_kisisel, f"👤 {name} - Bütçe")
+    draw_dashboard(df_kisisel, f"👤 Kendi Bütçem")
     
     if not df_kisisel.empty:
-        with st.expander("📋 Geçmiş Harcamalar & Fiş Düzenle", expanded=False):
+        with st.expander("📋 Geçmiş Harcamalar & Fiş Düzenleme Listesi", expanded=False):
             st.dataframe(df_kisisel[["Dönem", "tarih", "kategori", "İlaç", "isletme", "toplam_tutar"]], use_container_width=True)
-            
-            df_kisisel['secim_metni'] = df_kisisel['isletme'] + " - " + df_kisisel['toplam_tutar'].astype(str) + " TL"
-            secilen = st.selectbox("Düzenle/Sil:", ["Seçiniz..."] + df_kisisel['secim_metni'].tolist(), key="edit_kis")
-            if secilen != "Seçiniz...":
-                kayit = df_kisisel[df_kisisel['secim_metni'] == secilen].iloc[0]
-                doc_id = kayit['id']
-                with st.form(key="f_kis"):
-                    c1, c2 = st.columns(2)
-                    y_isl = c1.text_input("İşletme", kayit['isletme'])
-                    y_tar = c1.text_input("Tarih", kayit['tarih'])
-                    y_kat = c2.selectbox("Kategori", list(kategoriler.keys()), index=list(kategoriler.keys()).index(kayit['kategori']) if kayit['kategori'] in kategoriler else 0)
-                    y_tut = c2.number_input("Tutar", float(kayit['toplam_tutar']))
-                    
-                    if st.form_submit_button("💾 Güncelle"):
-                        db.collection('masraflar').document(doc_id).update({"isletme":y_isl, "tarih":y_tar, "kategori":y_kat, "toplam_tutar":y_tut})
-                        st.rerun()
-                    if st.form_submit_button("🗑️ Sil"):
-                        db.collection('masraflar').document(doc_id).delete()
-                        st.rerun()
+            st.divider()
+            render_edit_interface(df_kisisel, prefix_key="kisisel")
 
 # --- 2. SEKME: YENİ FİŞ YÜKLEME ---
 with tab_yeni:
-    st.markdown("<h4 style='text-align:center;'>Yapay Zeka Destekli Fiş Okuyucu</h4>", unsafe_allow_html=True)
+    st.markdown("<h3 style='text-align:center;'>🤖 Yapay Zeka Destekli Fiş Okuyucu</h3>", unsafe_allow_html=True)
     uploaded_file = st.file_uploader("Fotoğraf Yükle", type=['png', 'jpg', 'jpeg'])
 
     if uploaded_file is not None:
@@ -506,7 +532,7 @@ with tab_yeni:
             sec_kat = c1.selectbox("Kategori", list(kategoriler.keys()), index=list(kategoriler.keys()).index(ai_kat) if ai_kat in kategoriler else 0)
             sec_mar = c2.selectbox("İlaç", markalar, index=markalar.index(ai_mar) if ai_mar in markalar else 0)
 
-            if st.form_submit_button("Sisteme Kaydet") and toplam_tutar > 0:
+            if st.form_submit_button("💾 Sisteme Kaydet", use_container_width=True) and toplam_tutar > 0:
                 aktif_donem = get_donem(tarih)
                 df_k = pd.DataFrame(kisisel_masraflar) if kisisel_masraflar else pd.DataFrame()
                 harcanan = df_k[(df_k['Dönem'] == aktif_donem) & (df_k['kategori'] == sec_kat) & (df_k['İlaç'] == sec_mar)]['toplam_tutar'].sum() if not df_k.empty else 0
@@ -528,12 +554,12 @@ with tab_yeni:
 
 # --- 3. SEKME: DESTEK & SORUN BİLDİR ---
 with tab_destek:
-    st.markdown("<h3 style='text-align:center;'>🚨 Sorun Bildir</h3>", unsafe_allow_html=True)
+    st.markdown("<h3 style='text-align:center;'>🚨 Sistem Destek & Sorun Bildirimi</h3>", unsafe_allow_html=True)
     st.info("Sistemde bir hata, yanlış bir kayıt veya ekleyemediğiniz bir fiş mi var? Buradan yazın, yapay zeka analiz edip yöneticiye iletecektir.")
     
     with st.form("sorun_formu"):
         sorun_metni = st.text_area("Karşılaştığınız sorunu detaylıca açıklayın:")
-        if st.form_submit_button("Yöneticiye İlet"):
+        if st.form_submit_button("Yöneticiye İlet", use_container_width=True):
             if sorun_metni:
                 with st.spinner("Yapay zeka sorununuzu analiz ediyor..."):
                     try:
@@ -552,33 +578,41 @@ with tab_destek:
                         mail_icerik = f"Kullanıcı: {name}\nSorun: {sorun_metni}\n\nAI Analizi:\n{ai_analiz}"
                         send_email_to_admin("Yeni Sorun Bildirimi", mail_icerik)
                         
-                        st.success("Sorununuz analiz edildi ve yöneticiye güvenli bir şekilde iletildi. (Kendi kendine değişiklik yapılmadı).")
+                        st.success("Sorununuz analiz edildi ve yöneticiye güvenli bir şekilde iletildi.")
                     except:
                         db.collection('sorun_bildirimleri').add({"kullanici": name, "sorun": sorun_metni})
-                        st.success("Mesajınız iletildi.")
+                        st.success("Mesajınız başarıyla iletildi.")
 
 # --- ADMIN SEKMELERİ ---
 if is_admin:
     with tab_ekip:
         tm = get_expenses(True)
-        draw_dashboard(pd.DataFrame(tm), "👑 Tüm Ekip")
+        draw_dashboard(pd.DataFrame(tm), "👑 Tüm Ekip Harcamaları")
+        
+        df_tum = pd.DataFrame(tm)
+        if not df_tum.empty:
+            with st.expander("📋 Tüm Ekibin Geçmiş Harcamaları & Fiş Düzenleme", expanded=False):
+                st.dataframe(df_tum[["Dönem", "kullanici_adi", "tarih", "kategori", "İlaç", "isletme", "toplam_tutar"]], use_container_width=True)
+                st.divider()
+                render_edit_interface(df_tum, prefix_key="admin")
         
     with tab_ayarlar:
-        st.header("⚙️ Sistem Ayarları")
+        st.markdown("<h3 style='text-align:center;'>⚙️ Sistem ve Bütçe Ayarları</h3>", unsafe_allow_html=True)
         with st.form("ayar_form"):
             yk = {}
             for k, a in kategoriler.items():
                 lim = st.number_input(f"{k} Limit", float(a['limit']), key=f"l_{k}")
                 dap = st.slider(f"{k} Dapgeon %", 0, 100, int(a['dapgeon_oran']), key=f"o_{k}")
                 yk[k] = {"limit": lim, "dapgeon_oran": dap, "liniga_oran": 100-dap}
-            if st.form_submit_button("Kaydet"):
+            if st.form_submit_button("Ayarları Kalıcı Olarak Kaydet", type="primary", use_container_width=True):
                 save_system_settings({"kategoriler": yk, "markalar": markalar})
                 st.rerun()
                 
+        st.divider()
         st.subheader("🚨 Gelen Sorun Bildirimleri")
         docs = db.collection('sorun_bildirimleri').order_by('zaman', direction=firestore.Query.DESCENDING).limit(10).stream()
         for d in docs:
             b = d.to_dict()
             with st.expander(f"{b.get('zaman', '')} - {b.get('kullanici', '')}"):
-                st.write(f"**Sorun:** {b.get('sorun', '')}")
-                st.write(f"**AI Teşhisi:** {b.get('ai_analizi', 'Analiz yapılamadı.')}")
+                st.write(f"**Kullanıcının Sorunu:** {b.get('sorun', '')}")
+                st.write(f"**Yapay Zeka Teşhisi:** {b.get('ai_analizi', 'Analiz yapılamadı.')}")
