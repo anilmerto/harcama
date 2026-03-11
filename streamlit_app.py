@@ -87,6 +87,17 @@ try:
 except:
     st.sidebar.error("Gemini API Anahtarı 'Secrets' içinde bulunamadı!")
 
+# --- VERİ VE AYAR YÖNETİMİ ---
+if 'kategoriler' not in st.session_state:
+    st.session_state['kategoriler'] = {
+        "Temsil": {"limit": 7000.0, "dapgeon_oran": 60, "liniga_oran": 40},
+        "Audiovisual": {"limit": 7000.0, "dapgeon_oran": 60, "liniga_oran": 40},
+        "Bölgesel": {"limit": 3000.0, "dapgeon_oran": 60, "liniga_oran": 40}
+    }
+
+if 'markalar' not in st.session_state:
+    st.session_state['markalar'] = ["Dapgeon", "Liniga"]
+
 # --- YARDIMCI FONKSİYONLAR ---
 def compress_and_encode_image(image):
     img = image.copy()
@@ -95,27 +106,27 @@ def compress_and_encode_image(image):
     img.save(buffered, format="JPEG", quality=70)
     return base64.b64encode(buffered.getvalue()).decode("utf-8")
 
-# 15'inden 15'ine Dönem Hesaplama Fonksiyonu
 def get_donem(tarih_str):
     try:
-        t_str = str(tarih_str).replace('/', '.').replace('-', '.')
+        t_str = str(tarih_str).strip().replace('/', '.').replace('-', '.')
         parts = t_str.split('.')
         if len(parts) >= 3:
             day, month, year = int(parts[0]), int(parts[1]), int(parts[2])
             if year < 100: year += 2000
             
-            aylar = ["", "Ocak", "Şubat", "Mart", "Nisan", "Mayıs", "Haziran", "Temmuz", "Ağustos", "Eylül", "Ekim", "Kasım", "Aralık"]
-            
-            if day >= 15:
-                bas_ay, bas_yil = month, year
-                bit_ay = month + 1 if month < 12 else 1
-                bit_yil = year if month < 12 else year + 1
-            else:
-                bas_ay = month - 1 if month > 1 else 12
-                bas_yil = year if month > 1 else year - 1
-                bit_ay, bit_yil = month, year
+            if 1 <= month <= 12:
+                aylar = ["", "Ocak", "Şubat", "Mart", "Nisan", "Mayıs", "Haziran", "Temmuz", "Ağustos", "Eylül", "Ekim", "Kasım", "Aralık"]
                 
-            return f"15 {aylar[bas_ay]} {bas_yil} - 15 {aylar[bit_ay]} {bit_yil}"
+                if day >= 15:
+                    bas_ay, bas_yil = month, year
+                    bit_ay = month + 1 if month < 12 else 1
+                    bit_yil = year if month < 12 else year + 1
+                else:
+                    bas_ay = month - 1 if month > 1 else 12
+                    bas_yil = year if month > 1 else year - 1
+                    bit_ay, bit_yil = month, year
+                    
+                return f"15 {aylar[bas_ay]} {bas_yil} - 15 {aylar[bit_ay]} {bit_yil}"
     except:
         pass
     return "Bilinmeyen Dönem"
@@ -128,17 +139,35 @@ def get_expenses(fetch_all=False, user_id=None):
         query = expenses_ref.stream()
     
     data = []
+    mevcut_kategoriler = list(st.session_state['kategoriler'].keys())
+    mevcut_markalar = st.session_state['markalar']
+    
     for doc in query:
         item = doc.to_dict()
         item['id'] = doc.id
         
-        # KESİN ÇÖZÜM: Verilerin tiplerini garanti altına alıyoruz
-        item['kategori'] = str(item.get('kategori', item.get('Kategori', 'Bilinmeyen')))
-        item['İlaç'] = str(item.get('marka', item.get('İlaç', 'Bilinmeyen')))
+        # Kategori Normalize İşlemi
+        ham_kat = str(item.get('kategori', item.get('Kategori', 'Bilinmeyen'))).strip()
+        eslesen_kat = ham_kat
+        for mk in mevcut_kategoriler:
+            if mk.lower() == ham_kat.lower() or mk.upper() == ham_kat.upper():
+                eslesen_kat = mk
+                break
+        item['kategori'] = eslesen_kat
         
-        # Tutarın kesinlikle Float (sayı) olmasını sağlıyoruz
+        # İlaç Normalize İşlemi
+        ham_ilac = str(item.get('marka', item.get('İlaç', 'Bilinmeyen'))).strip()
+        eslesen_ilac = ham_ilac
+        for mi in mevcut_markalar:
+            if mi.lower() == ham_ilac.lower() or mi.upper() == ham_ilac.upper():
+                eslesen_ilac = mi
+                break
+        item['İlaç'] = eslesen_ilac
+        
+        # Tutar Düzeltme İşlemi (Virgül vs Nokta)
+        tutar_str = str(item.get('toplam_tutar', item.get('Toplam Tutar', 0.0))).replace(',', '.')
         try:
-            item['toplam_tutar'] = float(item.get('toplam_tutar', item.get('Toplam Tutar', 0.0)))
+            item['toplam_tutar'] = float(tutar_str)
         except:
             item['toplam_tutar'] = 0.0
             
@@ -151,7 +180,6 @@ def get_expenses(fetch_all=False, user_id=None):
         data.append(item)
     return data
 
-# Türkçe karakterleri İngilizce'ye çevirerek PDF font çökmesini önleme
 def safe_text(text):
     text = str(text)
     donusum = {"ı": "i", "İ": "I", "ş": "s", "Ş": "S", "ğ": "g", "Ğ": "G", "ü": "u", "Ü": "U", "ö": "o", "Ö": "O", "ç": "c", "Ç": "C"}
@@ -191,7 +219,6 @@ def create_pdf_report(df, donem, isim):
         
     return bytes(pdf.output(dest='S').encode('latin-1', 'ignore'))
 
-# --- FİŞ SİLME VE DÜZENLEME FONKSİYONLARI ---
 def delete_expense(doc_id):
     try:
         db.collection('masraflar').document(doc_id).delete()
@@ -209,17 +236,6 @@ def update_expense(doc_id, yeni_veri):
     except Exception as e:
         st.error(f"Güncelleme hatası: {e}")
         return False
-
-# --- VERİ VE AYAR YÖNETİMİ ---
-if 'kategoriler' not in st.session_state:
-    st.session_state['kategoriler'] = {
-        "Temsil": {"limit": 7000.0, "dapgeon_oran": 60, "liniga_oran": 40},
-        "Audiovisual": {"limit": 7000.0, "dapgeon_oran": 60, "liniga_oran": 40},
-        "Bölgesel": {"limit": 3000.0, "dapgeon_oran": 60, "liniga_oran": 40}
-    }
-
-if 'markalar' not in st.session_state:
-    st.session_state['markalar'] = ["Dapgeon", "Liniga"]
 
 # --- YAN PANEL: AYARLAR (SADECE ADMİN) ---
 if is_admin:
@@ -265,17 +281,15 @@ def draw_dashboard(df_harcamalar, baslik_metni):
         st.info("Sistemde henüz harcama verisi bulunmuyor.")
         return
 
-    # Dönem Seçimi
     donemler = sorted(df_harcamalar['Dönem'].unique(), reverse=True)
     secilen_donem = st.selectbox(f"📅 İncelenecek Dönemi Seçin", donemler, key=f"donem_secici_{baslik_metni}")
     
-    df_secili = df_harcamalar[df_harcamalar['Dönem'] == secilen_donem].copy() # Copy ile setting with copy warning'i engelliyoruz
+    df_secili = df_harcamalar[df_harcamalar['Dönem'] == secilen_donem].copy() 
     
     if df_secili.empty:
         st.warning("Bu dönemde hiç harcama bulunamadı.")
         return
 
-    # PDF Rapor İndirme Butonu (Dosya ismi temizlenmiş haliyle)
     isim_temiz = baslik_metni.replace("👤 ", "").replace("👑 ", "")
     safe_isim = re.sub(r'[^A-Za-z0-9_]', '', isim_temiz.replace(' ', '_'))
     safe_donem = re.sub(r'[^A-Za-z0-9_]', '', secilen_donem.replace(' ', '_'))
@@ -325,7 +339,6 @@ def draw_dashboard(df_harcamalar, baslik_metni):
         
         st.divider()
         
-    # Yeni Pasta Grafiği (Donut Chart)
     st.subheader("📈 Harcama Dağılımı (İlaç Bazlı)")
     grafik_df = df_secili.groupby('İlaç')['toplam_tutar'].sum().reset_index()
     
@@ -335,19 +348,17 @@ def draw_dashboard(df_harcamalar, baslik_metni):
         fig.update_traces(textposition='inside', textinfo='percent+label')
         st.plotly_chart(fig, use_container_width=True, key=f"pie_chart_{baslik_metni}")
 
-# --- YENİ EKLENEN FİŞ DÜZENLEME ARAYÜZÜ FONKSİYONU ---
+# --- FİŞ DÜZENLEME ARAYÜZÜ FONKSİYONU ---
 def render_edit_interface(df, prefix_key):
     st.subheader("✏️ Fiş Düzenle veya Sil")
     st.info("Geçmişte girdiğiniz hatalı fişleri buradan düzeltebilir veya tamamen silebilirsiniz.")
     
-    # Düzenlenecek fişi seçmek için dropdown (İşletme Adı - Tutar - Tarih)
     df['secim_metni'] = df['isletme'] + " - " + df['toplam_tutar'].astype(str) + " TL (" + df['tarih'] + ")"
     secim_listesi = ["Bir fiş seçin..."] + df['secim_metni'].tolist()
     
     secilen_metin = st.selectbox("Düzenlenecek Fişi Seçin:", secim_listesi, key=f"edit_select_{prefix_key}")
     
     if secilen_metin != "Bir fiş seçin...":
-        # Seçilen fişin tüm verilerini bul
         secilen_kayit = df[df['secim_metni'] == secilen_metin].iloc[0]
         doc_id = secilen_kayit['id']
         
@@ -359,7 +370,6 @@ def render_edit_interface(df, prefix_key):
                 y_isletme = st.text_input("İşletme Adı", value=secilen_kayit['isletme'])
                 y_tarih = st.text_input("Tarih (GG.AA.YYYY)", value=secilen_kayit['tarih'])
                 
-                # İlaç (Marka) ve Kategori listelerinde mevcut değeri bulup varsayılan yapma
                 mevcut_kategoriler = list(st.session_state['kategoriler'].keys())
                 mevcut_markalar = st.session_state['markalar']
                 
@@ -384,8 +394,8 @@ def render_edit_interface(df, prefix_key):
                     "isletme": y_isletme,
                     "tarih": y_tarih,
                     "kategori": y_kategori,
-                    "marka": y_ilac, # Veritabanında marka olarak geçiyor
-                    "toplam_tutar": float(y_tutar), # Kesinlikle float olarak güncellenir
+                    "marka": y_ilac, 
+                    "toplam_tutar": float(y_tutar), 
                     "fis_no": y_fis_no
                 }
                 if update_expense(doc_id, yeni_veri):
@@ -395,11 +405,10 @@ def render_edit_interface(df, prefix_key):
                 if delete_expense(doc_id):
                     st.rerun()
                     
-        # Görseli de gösterelim ki kullanıcı neyi düzenlediğini bilsin
         if pd.notna(secilen_kayit.get('gorsel_b64')):
             st.image(base64.b64decode(secilen_kayit['gorsel_b64']), caption="Fiş Görseli", width=300)
 
-# --- ANA EKRAN SEKMELERİ (SIRALAMA DEĞİŞTİ: ÖNCE DASHBOARD) ---
+# --- ANA EKRAN SEKMELER ---
 if is_admin:
     tabs = st.tabs(["👤 Kendi Harcamalarım", "➕ Yeni Fiş Yükle", "👑 Tüm Ekip (Admin Paneli)"])
     tab_kisisel, tab_yeni, tab_ekip = tabs
@@ -407,7 +416,7 @@ else:
     tabs = st.tabs(["👤 Kendi Harcamalarım", "➕ Yeni Fiş Yükle"])
     tab_kisisel, tab_yeni = tabs[0], tabs[1]
 
-# --- 1. SEKME: KİŞİSEL PANEL (VARSAYILAN AÇILAN EKRAN) ---
+# --- 1. SEKME: KİŞİSEL PANEL ---
 with tab_kisisel:
     kisisel_masraflar = get_expenses(fetch_all=False, user_id=username)
     df_kisisel = pd.DataFrame(kisisel_masraflar) if kisisel_masraflar else pd.DataFrame()
@@ -420,7 +429,6 @@ with tab_kisisel:
         gosterilecek_sutunlar = ["Dönem", "tarih", "kategori", "İlaç", "isletme", "toplam_tutar", "fis_no"]
         st.dataframe(df_kisisel[gosterilecek_sutunlar], use_container_width=True)
         
-        # YENİ EKLENEN: Kişisel fişleri düzenleme alanı
         st.divider()
         render_edit_interface(df_kisisel, prefix_key="kisisel")
         
@@ -470,7 +478,6 @@ with tab_yeni:
             
             ai_data = st.session_state.get('ai_data', {})
             
-            # YZ'nin seçtiği kategori ve markayı form için bul
             ai_kat = ai_data.get("kategori", mevcut_kategoriler[0])
             ai_mar = ai_data.get("marka", mevcut_markalar[0])
             idx_kat = mevcut_kategoriler.index(ai_kat) if ai_kat in mevcut_kategoriler else 0
@@ -494,7 +501,6 @@ with tab_yeni:
                 submit_button = st.form_submit_button("Sisteme Kaydet")
                 
                 if submit_button and toplam_tutar > 0:
-                    # 200 TL LİMİT AŞIMI KONTROLÜ
                     aktif_donem = get_donem(tarih)
                     
                     df_kontrol = pd.DataFrame(kisisel_masraflar) if kisisel_masraflar else pd.DataFrame()
@@ -530,7 +536,7 @@ with tab_yeni:
                                 "harcama_turu": harcama_turu,
                                 "kategori": secilen_kategori,
                                 "marka": secilen_marka, 
-                                "toplam_tutar": float(toplam_tutar), # Kesinlikle float kaydet
+                                "toplam_tutar": float(toplam_tutar), 
                                 "kdv_orani": float(kdv_orani),
                                 "kdv_tutari": float(kdv_tutari),
                                 "gorsel_b64": img_base64,
@@ -540,7 +546,7 @@ with tab_yeni:
                             db.collection('masraflar').add(yeni_kayit)
                             st.success(f"✅ Başarıyla Kaydedildi! Dönem: {aktif_donem}")
                             st.session_state['last_uploaded'] = None 
-                            st.rerun() # Kayıttan sonra sayfayı yenile ki dashboard güncellensin
+                            st.rerun() 
 
 # --- 3. SEKME: EKİP PANELİ (SADECE ADMİN) ---
 if is_admin:
@@ -556,7 +562,6 @@ if is_admin:
             gosterilecek_sutunlar_admin = ["Dönem", "kullanici_adi", "tarih", "kategori", "İlaç", "isletme", "toplam_tutar", "fis_no"]
             st.dataframe(df_tum[gosterilecek_sutunlar_admin], use_container_width=True)
             
-            # YENİ EKLENEN: Tüm ekibin fişlerini düzenleme alanı (Sadece Admin görebilir)
             st.divider()
             render_edit_interface(df_tum, prefix_key="admin")
             
