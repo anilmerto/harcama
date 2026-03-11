@@ -15,17 +15,31 @@ import re
 import os
 
 # --- SAYFA YAPILANDIRMASI ---
-st.set_page_config(page_title="Genveon Masraf Portalı", layout="wide", page_icon="🧾", initial_sidebar_state="auto")
+st.set_page_config(page_title="Genveon Masraf Portalı", layout="wide", page_icon="🧾")
 
-# --- MOBİL UYUM (RESPONSIVE) CSS ---
+# --- MOBİL UYUM VE TASARIM CSS ---
 st.markdown("""
     <style>
-        /* Mobil cihazlarda tabloların ve metriklerin daha iyi görünmesi için */
+        /* Sekmeleri (Menüyü) Ortala ve Büyüt */
+        .stTabs [data-baseweb="tab-list"] {
+            justify-content: center;
+            gap: 20px;
+        }
+        .stTabs [data-baseweb="tab"] {
+            font-size: 1.1rem;
+            padding: 10px 20px;
+        }
+        /* Mobilde Logoyu Ortala ve Tasarımı Toparla */
         @media (max-width: 768px) {
-            .css-1544g2n { padding: 1rem 1rem !important; }
-            h1 { font-size: 1.8rem !important; }
-            h2 { font-size: 1.5rem !important; }
-            h3 { font-size: 1.2rem !important; }
+            .mobile-center {
+                display: flex;
+                justify-content: center;
+                text-align: center;
+            }
+            .kurumsal-baslik {
+                font-size: 20px !important;
+                margin-bottom: 20px !important;
+            }
         }
         /* Logonun altındaki kurumsal yazı fontu */
         .kurumsal-baslik {
@@ -63,7 +77,6 @@ def get_system_settings():
     if doc.exists:
         return doc.to_dict()
     else:
-        # Veritabanında ayar yoksa varsayılanları oluştur ve kaydet
         default_settings = {
             "kategoriler": {
                 "Temsil": {"limit": 7000.0, "dapgeon_oran": 60, "liniga_oran": 40},
@@ -78,11 +91,9 @@ def get_system_settings():
 def save_system_settings(settings_dict):
     db.collection('ayarlar').document('sistem').set(settings_dict)
 
-# Ayarları Session State'e yükle (Her girişte güncel kalması için)
 if 'sistem_ayarlari' not in st.session_state:
     st.session_state['sistem_ayarlari'] = get_system_settings()
 
-# Kolay erişim değişkenleri
 ayarlar = st.session_state['sistem_ayarlari']
 kategoriler = ayarlar['kategoriler']
 markalar = ayarlar['markalar']
@@ -108,17 +119,17 @@ try:
         st.secrets["cookie"]["key"],
         st.secrets["cookie"]["expiry_days"]
     )
-    
 except Exception as e:
     st.error(f"Giriş sistemi yapılandırılamadı. Hata detayı: {e}")
     st.stop()
 
 auth_status = st.session_state.get("authentication_status")
 
-# GİRİŞ EKRANI TASARIMI (Logo ve Başlık)
+# GİRİŞ EKRANI TASARIMI
 if auth_status is not True:
     col1, col2, col3 = st.columns([1, 2, 1])
     with col2:
+        st.markdown("<div class='mobile-center'>", unsafe_allow_html=True)
         try:
             if os.path.exists("logo.png"):
                 st.image("logo.png", use_container_width=True)
@@ -126,37 +137,42 @@ if auth_status is not True:
                 st.markdown("<h1 style='text-align: center; color: #3498db;'>GENVEON</h1>", unsafe_allow_html=True)
         except:
             st.markdown("<h1 style='text-align: center; color: #3498db;'>GENVEON</h1>", unsafe_allow_html=True)
+        st.markdown("</div>", unsafe_allow_html=True)
         
         st.markdown("<div class='kurumsal-baslik'>Masraf Takip Uygulaması</div>", unsafe_allow_html=True)
         
     authenticator.login()
     st.stop()
 
-# --- GİRİŞ BAŞARILI SONRASI ---
+# --- GİRİŞ BAŞARILI SONRASI (ANA BAŞLIK VE MENÜ) ---
 name = st.session_state.get("name")
 username = st.session_state.get("username")
 is_admin = (username == 'admin')
 
-# YAN PANEL LOGO
-st.sidebar.markdown("<div style='text-align: center;'>", unsafe_allow_html=True)
-try:
-    if os.path.exists("logo.png"):
-        st.sidebar.image("logo.png", width=200)
-    else:
-        st.sidebar.markdown("<h2>GENVEON</h2>", unsafe_allow_html=True)
-except:
-    pass
-st.sidebar.markdown("</div>", unsafe_allow_html=True)
-st.sidebar.divider()
+# Üst Bilgi Çubuğu (Logo Solda, Hoşgeldin ve Çıkış Sağda)
+h_col1, h_col2, h_col3 = st.columns([1, 2, 1])
+with h_col1:
+    st.markdown("<div class='mobile-center'>", unsafe_allow_html=True)
+    try:
+        if os.path.exists("logo.png"):
+            st.image("logo.png", width=180)
+        else:
+            st.markdown("<h2 style='color: #3498db; margin:0;'>GENVEON</h2>", unsafe_allow_html=True)
+    except:
+        pass
+    st.markdown("</div>", unsafe_allow_html=True)
 
-authenticator.logout('Çıkış Yap', 'sidebar')
-st.sidebar.write(f"Hoş geldin, **{name}** 👋")
+with h_col3:
+    st.write(f"Hoş geldin, **{name}**")
+    authenticator.logout('Çıkış Yap', 'main')
+
+st.divider()
 
 # --- GEMINI YZ YAPILANDIRMASI ---
 try:
     genai.configure(api_key=st.secrets["gemini"]["api_key"])
 except:
-    st.sidebar.error("Gemini API Anahtarı 'Secrets' içinde bulunamadı!")
+    st.error("Gemini API Anahtarı 'Secrets' içinde bulunamadı!")
 
 # --- YARDIMCI FONKSİYONLAR ---
 def compress_and_encode_image(image):
@@ -322,60 +338,6 @@ def update_expense(doc_id, yeni_veri):
         st.error(f"Güncelleme hatası: {e}")
         return False
 
-# --- YAN PANEL: AYARLAR (SADECE ADMİN) ---
-if is_admin:
-    st.sidebar.divider()
-    
-    with st.sidebar.expander("⚙️ Sistem Ayarları (Kalıcı)", expanded=False):
-        with st.form("ayarlar_formu"):
-            st.subheader("1. Kategori & Bütçe Ayarları")
-            yeni_kategoriler = {}
-            for kat_adi, ayar in kategoriler.items():
-                st.markdown(f"**📂 {kat_adi}**")
-                y_limit = st.number_input(f"Limit (TL)", value=float(ayar['limit']), key=f"form_lim_{kat_adi}")
-                y_dap_oran = st.slider(f"Dapgeon Payı (%)", 0, 100, int(ayar['dapgeon_oran']), key=f"form_oran_{kat_adi}")
-                y_lin_oran = 100 - y_dap_oran
-                st.caption(f"Liniga Payı: %{y_lin_oran}")
-                
-                yeni_kategoriler[kat_adi] = {
-                    "limit": y_limit,
-                    "dapgeon_oran": y_dap_oran,
-                    "liniga_oran": y_lin_oran
-                }
-                st.divider()
-                
-            kaydet_btn = st.form_submit_button("Ayarları Kalıcı Olarak Kaydet", type="primary")
-            
-            if kaydet_btn:
-                yeni_ayarlar = {"kategoriler": yeni_kategoriler, "markalar": markalar}
-                save_system_settings(yeni_ayarlar)
-                st.session_state['sistem_ayarlari'] = yeni_ayarlar
-                st.success("Ayarlar başarıyla veritabanına kaydedildi!")
-                st.rerun()
-
-        st.subheader("2. Yeni İlaç Ekle")
-        yeni_marka = st.text_input("İlaç Adı (Örn: X-İlacı)", key="y_ilac_input")
-        if st.button("İlacı Ekle") and yeni_marka:
-            if yeni_marka not in markalar:
-                markalar.append(yeni_marka)
-                yeni_ayarlar = {"kategoriler": kategoriler, "markalar": markalar}
-                save_system_settings(yeni_ayarlar)
-                st.session_state['sistem_ayarlari'] = yeni_ayarlar
-                st.success(f"'{yeni_marka}' kalıcı olarak eklendi!")
-                st.rerun()
-
-        st.divider()
-        st.subheader("3. Yeni Ana Kategori Ekle")
-        yeni_kat_adi = st.text_input("Kategori Adı (Örn: Konaklama)", key="y_kat_input")
-        if st.button("Kategoriyi Ekle") and yeni_kat_adi:
-            if yeni_kat_adi not in kategoriler:
-                kategoriler[yeni_kat_adi] = {"limit": 5000.0, "dapgeon_oran": 60, "liniga_oran": 40}
-                yeni_ayarlar = {"kategoriler": kategoriler, "markalar": markalar}
-                save_system_settings(yeni_ayarlar)
-                st.session_state['sistem_ayarlari'] = yeni_ayarlar
-                st.success(f"'{yeni_kat_adi}' kalıcı olarak eklendi!")
-                st.rerun()
-
 # --- DASHBOARD ÇİZİM FONKSİYONU ---
 def draw_dashboard(df_harcamalar, baslik_metni):
     st.header(baslik_metni)
@@ -393,46 +355,29 @@ def draw_dashboard(df_harcamalar, baslik_metni):
         st.warning("Bu dönemde hiç harcama bulunamadı.")
         return
 
-    # YENİ: KAYIP HARCAMA DEDEKTÖRÜ
     mevcut_kat_listesi = list(kategoriler.keys())
     unmapped_df = df_secili[~df_secili['kategori'].isin(mevcut_kat_listesi)]
     if not unmapped_df.empty:
         st.error("⚠️ DİKKAT: Aşağıdaki harcamaların kategorisi sistemdeki bütçelerle eşleşmiyor! Lütfen 'Fiş Düzenle' kısmından doğru kategoriyi seçip güncelleyin.")
         st.dataframe(unmapped_df[['tarih', 'kategori', 'İlaç', 'isletme', 'toplam_tutar']], use_container_width=True)
 
-    # --- MİNİ ARA RAPOR ALANI (TASARIM GÜNCELLENDİ) ---
-    ara_rapor_html = """
-    <div style="background-color: rgba(46, 204, 113, 0.15); padding: 20px; border-radius: 15px; border: 1px solid rgba(46, 204, 113, 0.3); margin-bottom: 25px;">
-        <h3 style="margin-top: 0; color: #27ae60; font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;">⏱️ Hızlı Dönem Özeti (Kategori Bazlı)</h3>
-        <div style="display: flex; gap: 15px; flex-wrap: wrap;">
-    """
+    # --- MİNİ ARA RAPOR ALANI (NATIVE STREAMLIT TASARIMI - HATA VERMEZ) ---
+    st.markdown("### ⏱️ Hızlı Dönem Özeti (Kategori Bazlı)")
     
-    for kat_adi, ayar in kategoriler.items():
-        limit = ayar['limit']
-        harcanan = df_secili[df_secili['kategori'] == kat_adi]['toplam_tutar'].sum() if not df_secili.empty else 0.0
-        kalan = limit - harcanan
-        
-        kalan_renk = "#27ae60" if kalan >= 0 else "#e74c3c"
-        
-        ara_rapor_html += f"""
-            <div style="flex: 1; min-width: 180px; background-color: var(--secondary-background-color); padding: 15px; border-radius: 10px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); border-left: 5px solid {kalan_renk}; color: var(--text-color);">
-                <h4 style="margin-top: 0; margin-bottom: 10px; font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;">📂 {kat_adi}</h4>
-                <div style="font-size: 14px; font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;">
-                    <div style="margin-bottom: 4px;">Ayrılan: <b>{limit:,.2f} TL</b></div>
-                    <div style="margin-bottom: 8px;">Harcanan: <b style="color: #e74c3c;">{harcanan:,.2f} TL</b></div>
-                    <div style="font-size: 15px; border-top: 1px solid var(--border-color); padding-top: 8px;">
-                        Kalan: <b style="color: {kalan_renk};">{kalan:,.2f} TL</b>
-                    </div>
-                </div>
-            </div>
-        """
-        
-    ara_rapor_html += """
-        </div>
-    </div>
-    """
+    # Kategorileri yan yana dizmek için kolonlar oluşturuyoruz
+    rapor_kolonlari = st.columns(len(kategoriler))
     
-    st.markdown(ara_rapor_html, unsafe_allow_html=True)
+    for idx, (kat_adi, ayar) in enumerate(kategoriler.items()):
+        with rapor_kolonlari[idx]:
+            with st.container(border=True): # Yeni şık kutu tasarımı
+                limit = ayar['limit']
+                harcanan = df_secili[df_secili['kategori'] == kat_adi]['toplam_tutar'].sum() if not df_secili.empty else 0.0
+                kalan = limit - harcanan
+                
+                st.markdown(f"**📂 {kat_adi}**")
+                # Delta_color "inverse" ise: azalan değerler yeşil, artan kırmızı (tam bütçe mantığı)
+                st.metric(label="Kalan Bütçe", value=f"{kalan:,.2f} TL", delta=f"-{harcanan:,.2f} TL Harcandı", delta_color="inverse")
+    
     st.divider()
 
     isim_temiz = baslik_metni.replace("👤 ", "").replace("👑 ", "")
@@ -552,10 +497,10 @@ def render_edit_interface(df, prefix_key):
         if pd.notna(secilen_kayit.get('gorsel_b64')):
             st.image(base64.b64decode(secilen_kayit['gorsel_b64']), caption="Fiş Görseli", use_container_width=True)
 
-# --- ANA EKRAN SEKMELER ---
+# --- ANA SEKMELER (KLASİK WEB SİTESİ NAVİGASYONU) ---
 if is_admin:
-    tabs = st.tabs(["👤 Kendi Harcamalarım", "➕ Yeni Fiş Yükle", "👑 Tüm Ekip (Admin Paneli)"])
-    tab_kisisel, tab_yeni, tab_ekip = tabs
+    tabs = st.tabs(["👤 Kendi Harcamalarım", "➕ Yeni Fiş Yükle", "👑 Tüm Ekip", "⚙️ Ayarlar"])
+    tab_kisisel, tab_yeni, tab_ekip, tab_ayarlar = tabs
 else:
     tabs = st.tabs(["👤 Kendi Harcamalarım", "➕ Yeni Fiş Yükle"])
     tab_kisisel, tab_yeni = tabs[0], tabs[1]
@@ -572,7 +517,6 @@ with tab_kisisel:
     if not df_kisisel.empty:
         gosterilecek_sutunlar = ["Dönem", "tarih", "kategori", "İlaç", "isletme", "toplam_tutar", "fis_no"]
         st.dataframe(df_kisisel[gosterilecek_sutunlar], use_container_width=True)
-        
         st.divider()
         render_edit_interface(df_kisisel, prefix_key="kisisel")
     else:
@@ -704,8 +648,62 @@ if is_admin:
         if not df_tum.empty:
             gosterilecek_sutunlar_admin = ["Dönem", "kullanici_adi", "tarih", "kategori", "İlaç", "isletme", "toplam_tutar", "fis_no"]
             st.dataframe(df_tum[gosterilecek_sutunlar_admin], use_container_width=True)
-            
             st.divider()
             render_edit_interface(df_tum, prefix_key="admin")
         else:
             st.info("Sistemde kayıtlı fiş bulunmuyor.")
+
+# --- 4. SEKME: AYARLAR (SADECE ADMİN) ---
+if is_admin:
+    with tab_ayarlar:
+        st.header("⚙️ Sistem Ayarları (Kalıcı)")
+        st.info("Burada yapılan tüm değişiklikler veritabanına kaydedilir ve kalıcıdır.")
+        
+        with st.form("ayarlar_formu"):
+            st.subheader("1. Kategori & Bütçe Ayarları")
+            yeni_kategoriler = {}
+            for kat_adi, ayar in kategoriler.items():
+                st.markdown(f"**📂 {kat_adi}**")
+                y_limit = st.number_input(f"Limit (TL)", value=float(ayar['limit']), key=f"form_lim_{kat_adi}")
+                y_dap_oran = st.slider(f"Dapgeon Payı (%)", 0, 100, int(ayar['dapgeon_oran']), key=f"form_oran_{kat_adi}")
+                y_lin_oran = 100 - y_dap_oran
+                st.caption(f"Liniga Payı: %{y_lin_oran}")
+                
+                yeni_kategoriler[kat_adi] = {
+                    "limit": y_limit,
+                    "dapgeon_oran": y_dap_oran,
+                    "liniga_oran": y_lin_oran
+                }
+                st.divider()
+                
+            kaydet_btn = st.form_submit_button("Ayarları Kalıcı Olarak Kaydet", type="primary")
+            
+            if kaydet_btn:
+                yeni_ayarlar = {"kategoriler": yeni_kategoriler, "markalar": markalar}
+                save_system_settings(yeni_ayarlar)
+                st.session_state['sistem_ayarlari'] = yeni_ayarlar
+                st.success("Ayarlar başarıyla veritabanına kaydedildi!")
+                st.rerun()
+
+        st.subheader("2. Yeni İlaç Ekle")
+        yeni_marka = st.text_input("İlaç Adı (Örn: X-İlacı)", key="y_ilac_input")
+        if st.button("İlacı Ekle") and yeni_marka:
+            if yeni_marka not in markalar:
+                markalar.append(yeni_marka)
+                yeni_ayarlar = {"kategoriler": kategoriler, "markalar": markalar}
+                save_system_settings(yeni_ayarlar)
+                st.session_state['sistem_ayarlari'] = yeni_ayarlar
+                st.success(f"'{yeni_marka}' kalıcı olarak eklendi!")
+                st.rerun()
+
+        st.divider()
+        st.subheader("3. Yeni Ana Kategori Ekle")
+        yeni_kat_adi = st.text_input("Kategori Adı (Örn: Konaklama)", key="y_kat_input")
+        if st.button("Kategoriyi Ekle") and yeni_kat_adi:
+            if yeni_kat_adi not in kategoriler:
+                kategoriler[yeni_kat_adi] = {"limit": 5000.0, "dapgeon_oran": 60, "liniga_oran": 40}
+                yeni_ayarlar = {"kategoriler": kategoriler, "markalar": markalar}
+                save_system_settings(yeni_ayarlar)
+                st.session_state['sistem_ayarlari'] = yeni_ayarlar
+                st.success(f"'{yeni_kat_adi}' kalıcı olarak eklendi!")
+                st.rerun()
