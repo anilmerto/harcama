@@ -325,33 +325,56 @@ def update_expense(doc_id, yeni_veri):
 # --- YAN PANEL: AYARLAR (SADECE ADMİN) ---
 if is_admin:
     st.sidebar.divider()
-    st.sidebar.header("⚙️ Sistem Ayarları (Kalıcı)")
     
-    with st.sidebar.form("ayarlar_formu"):
-        st.subheader("Kategori & Bütçe Ayarları")
-        yeni_kategoriler = {}
-        for kat_adi, ayar in kategoriler.items():
-            st.markdown(f"**📂 {kat_adi}**")
-            y_limit = st.number_input(f"Limit (TL)", value=float(ayar['limit']), key=f"form_lim_{kat_adi}")
-            y_dap_oran = st.slider(f"Dapgeon Payı (%)", 0, 100, int(ayar['dapgeon_oran']), key=f"form_oran_{kat_adi}")
-            y_lin_oran = 100 - y_dap_oran
-            st.caption(f"Liniga Payı: %{y_lin_oran}")
+    with st.sidebar.expander("⚙️ Sistem Ayarları (Kalıcı)", expanded=False):
+        with st.form("ayarlar_formu"):
+            st.subheader("1. Kategori & Bütçe Ayarları")
+            yeni_kategoriler = {}
+            for kat_adi, ayar in kategoriler.items():
+                st.markdown(f"**📂 {kat_adi}**")
+                y_limit = st.number_input(f"Limit (TL)", value=float(ayar['limit']), key=f"form_lim_{kat_adi}")
+                y_dap_oran = st.slider(f"Dapgeon Payı (%)", 0, 100, int(ayar['dapgeon_oran']), key=f"form_oran_{kat_adi}")
+                y_lin_oran = 100 - y_dap_oran
+                st.caption(f"Liniga Payı: %{y_lin_oran}")
+                
+                yeni_kategoriler[kat_adi] = {
+                    "limit": y_limit,
+                    "dapgeon_oran": y_dap_oran,
+                    "liniga_oran": y_lin_oran
+                }
+                st.divider()
+                
+            kaydet_btn = st.form_submit_button("Ayarları Kalıcı Olarak Kaydet", type="primary")
             
-            yeni_kategoriler[kat_adi] = {
-                "limit": y_limit,
-                "dapgeon_oran": y_dap_oran,
-                "liniga_oran": y_lin_oran
-            }
-            st.divider()
-            
-        kaydet_btn = st.form_submit_button("Ayarları Kalıcı Olarak Kaydet", type="primary")
-        
-        if kaydet_btn:
-            yeni_ayarlar = {"kategoriler": yeni_kategoriler, "markalar": markalar}
-            save_system_settings(yeni_ayarlar)
-            st.session_state['sistem_ayarlari'] = yeni_ayarlar
-            st.success("Ayarlar başarıyla veritabanına kaydedildi!")
-            st.rerun()
+            if kaydet_btn:
+                yeni_ayarlar = {"kategoriler": yeni_kategoriler, "markalar": markalar}
+                save_system_settings(yeni_ayarlar)
+                st.session_state['sistem_ayarlari'] = yeni_ayarlar
+                st.success("Ayarlar başarıyla veritabanına kaydedildi!")
+                st.rerun()
+
+        st.subheader("2. Yeni İlaç Ekle")
+        yeni_marka = st.text_input("İlaç Adı (Örn: X-İlacı)", key="y_ilac_input")
+        if st.button("İlacı Ekle") and yeni_marka:
+            if yeni_marka not in markalar:
+                markalar.append(yeni_marka)
+                yeni_ayarlar = {"kategoriler": kategoriler, "markalar": markalar}
+                save_system_settings(yeni_ayarlar)
+                st.session_state['sistem_ayarlari'] = yeni_ayarlar
+                st.success(f"'{yeni_marka}' kalıcı olarak eklendi!")
+                st.rerun()
+
+        st.divider()
+        st.subheader("3. Yeni Ana Kategori Ekle")
+        yeni_kat_adi = st.text_input("Kategori Adı (Örn: Konaklama)", key="y_kat_input")
+        if st.button("Kategoriyi Ekle") and yeni_kat_adi:
+            if yeni_kat_adi not in kategoriler:
+                kategoriler[yeni_kat_adi] = {"limit": 5000.0, "dapgeon_oran": 60, "liniga_oran": 40}
+                yeni_ayarlar = {"kategoriler": kategoriler, "markalar": markalar}
+                save_system_settings(yeni_ayarlar)
+                st.session_state['sistem_ayarlari'] = yeni_ayarlar
+                st.success(f"'{yeni_kat_adi}' kalıcı olarak eklendi!")
+                st.rerun()
 
 # --- DASHBOARD ÇİZİM FONKSİYONU ---
 def draw_dashboard(df_harcamalar, baslik_metni):
@@ -377,16 +400,39 @@ def draw_dashboard(df_harcamalar, baslik_metni):
         st.error("⚠️ DİKKAT: Aşağıdaki harcamaların kategorisi sistemdeki bütçelerle eşleşmiyor! Lütfen 'Fiş Düzenle' kısmından doğru kategoriyi seçip güncelleyin.")
         st.dataframe(unmapped_df[['tarih', 'kategori', 'İlaç', 'isletme', 'toplam_tutar']], use_container_width=True)
 
-    # --- MİNİ ARA RAPOR ALANI (YENİ) ---
-    st.markdown("### ⏱️ Hızlı Dönem Özeti (Ara Rapor)")
-    toplam_genel_limit = sum(k['limit'] for k in kategoriler.values())
-    toplam_genel_harcama = df_secili['toplam_tutar'].sum()
-    toplam_genel_kalan = toplam_genel_limit - toplam_genel_harcama
+    # --- MİNİ ARA RAPOR ALANI (TASARIM GÜNCELLENDİ) ---
+    ara_rapor_html = """
+    <div style="background-color: rgba(46, 204, 113, 0.15); padding: 20px; border-radius: 15px; border: 1px solid rgba(46, 204, 113, 0.3); margin-bottom: 25px;">
+        <h3 style="margin-top: 0; color: #27ae60; font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;">⏱️ Hızlı Dönem Özeti (Kategori Bazlı)</h3>
+        <div style="display: flex; gap: 15px; flex-wrap: wrap;">
+    """
     
-    m_col1, m_col2, m_col3 = st.columns(3)
-    m_col1.metric("Ayrılan Toplam Bütçe", f"{toplam_genel_limit:,.2f} TL")
-    m_col2.metric("Güncel Toplam Harcama", f"{toplam_genel_harcama:,.2f} TL", delta=f"-{toplam_genel_harcama:,.2f} TL", delta_color="inverse")
-    m_col3.metric("Toplam Kalan Bakiye", f"{max(toplam_genel_kalan, 0):,.2f} TL", delta=f"{toplam_genel_kalan:,.2f} TL" if toplam_genel_kalan >=0 else "AŞILDI", delta_color="normal")
+    for kat_adi, ayar in kategoriler.items():
+        limit = ayar['limit']
+        harcanan = df_secili[df_secili['kategori'] == kat_adi]['toplam_tutar'].sum() if not df_secili.empty else 0.0
+        kalan = limit - harcanan
+        
+        kalan_renk = "#27ae60" if kalan >= 0 else "#e74c3c"
+        
+        ara_rapor_html += f"""
+            <div style="flex: 1; min-width: 180px; background-color: var(--secondary-background-color); padding: 15px; border-radius: 10px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); border-left: 5px solid {kalan_renk}; color: var(--text-color);">
+                <h4 style="margin-top: 0; margin-bottom: 10px; font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;">📂 {kat_adi}</h4>
+                <div style="font-size: 14px; font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;">
+                    <div style="margin-bottom: 4px;">Ayrılan: <b>{limit:,.2f} TL</b></div>
+                    <div style="margin-bottom: 8px;">Harcanan: <b style="color: #e74c3c;">{harcanan:,.2f} TL</b></div>
+                    <div style="font-size: 15px; border-top: 1px solid var(--border-color); padding-top: 8px;">
+                        Kalan: <b style="color: {kalan_renk};">{kalan:,.2f} TL</b>
+                    </div>
+                </div>
+            </div>
+        """
+        
+    ara_rapor_html += """
+        </div>
+    </div>
+    """
+    
+    st.markdown(ara_rapor_html, unsafe_allow_html=True)
     st.divider()
 
     isim_temiz = baslik_metni.replace("👤 ", "").replace("👑 ", "")
