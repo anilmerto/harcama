@@ -12,6 +12,7 @@ import streamlit_authenticator as stauth
 import plotly.express as px
 from fpdf import FPDF
 import re
+import os
 import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
@@ -161,9 +162,10 @@ except Exception as e:
 
 auth_status = st.session_state.get("authentication_status")
 
-# --- GİRİŞ EKRANI TASARIMI (GÜNCELLENDİ) ---
+# --- GİRİŞ EKRANI TASARIMI VE İZOLE EDİLMİŞ CSS HACK ---
 if auth_status is not True:
     
+    # Sadece giriş butonunu Türkçeleştir, diğerlerini bozma!
     st.markdown("""
         <style>
             [data-testid="stFormSubmitButton"] button p { font-size: 0px !important; }
@@ -177,7 +179,10 @@ if auth_status is not True:
     
     st.markdown("<div style='display:flex; justify-content:center; margin-bottom: 20px;'>", unsafe_allow_html=True)
     try:
-        st.image("logo.png", width=250)
+        if os.path.exists("logo.png"):
+            st.image("logo.png", width=250)
+        else:
+            st.markdown("<h1 style='color: #3498db; text-align: center;'>GENVEON</h1>", unsafe_allow_html=True)
     except:
         st.markdown("<h1 style='color: #3498db; text-align: center;'>GENVEON</h1>", unsafe_allow_html=True)
     st.markdown("</div>", unsafe_allow_html=True)
@@ -197,9 +202,12 @@ is_admin = (username == 'admin')
 col_logo, col_space, col_user = st.columns([2, 1, 2])
 with col_logo:
     try:
-        st.image("logo.png", width=180)
+        if os.path.exists("logo.png"):
+            st.image("logo.png", width=180)
+        else:
+            st.markdown("<h3 style='color: #3498db; margin:0;'>GENVEON</h3>", unsafe_allow_html=True)
     except:
-        st.markdown("<h3 style='color: #3498db; margin:0;'>GENVEON</h3>", unsafe_allow_html=True)
+        pass
 
 with col_user:
     st.markdown(f"<div style='text-align: right; padding-top:10px;'>Hoş geldin, <b>{name}</b></div>", unsafe_allow_html=True)
@@ -337,7 +345,7 @@ def create_pdf_report(df, donem, isim):
         pdf.ln()
     return bytes(pdf.output(dest='S').encode('latin-1', 'ignore'))
 
-# --- FİŞ DÜZENLEME ARAYÜZÜ (GELİŞMİŞ EKSİKSİZ) ---
+# --- FİŞ DÜZENLEME ARAYÜZÜ (EKSİKSİZ) ---
 def render_edit_interface(df, prefix_key):
     st.markdown("#### ✏️ Fiş Düzenle veya Sil")
     df['secim_metni'] = df['isletme'] + " - " + df['toplam_tutar'].astype(str) + " TL (" + df['tarih'] + ")"
@@ -368,7 +376,7 @@ def render_edit_interface(df, prefix_key):
             idx_m = markalar.index(secilen_kayit['İlaç']) if secilen_kayit['İlaç'] in markalar else 0
             y_ilac = c2.selectbox("İlaç", markalar, index=idx_m)
             
-            st.write("") # Boşluk
+            st.write("") 
             
             col_b1, col_b2 = st.columns(2)
             btn_guncelle = col_b1.form_submit_button("💾 Güncelle", use_container_width=True, type="primary")
@@ -477,7 +485,7 @@ with tab_kisisel:
             st.divider()
             render_edit_interface(df_kisisel, prefix_key="kisisel")
 
-# --- 2. SEKME: YENİ FİŞ YÜKLEME (GÜNCELLENDİ) ---
+# --- 2. SEKME: YENİ FİŞ YÜKLEME (TÜM ALANLAR EKLENDİ VE LİMİT DÜZELTİLDİ) ---
 with tab_yeni:
     st.markdown("<h3 style='text-align:center;'>🤖 Yapay Zeka Destekli Fiş Okuyucu</h3>", unsafe_allow_html=True)
     uploaded_file = st.file_uploader("Fotoğraf Yükle", type=['png', 'jpg', 'jpeg'])
@@ -519,7 +527,7 @@ with tab_yeni:
         with st.form("masraf_formu"):
             c1, c2 = st.columns(2)
             
-            # Eksik alanlar formlara geri eklendi
+            # --- EKSİKSİZ FORM ALANLARI ---
             isletme = c1.text_input("İşletme Adı", safe_text(ai_data.get("isletme", "")))
             fis_no = c1.text_input("Fiş No", safe_text(ai_data.get("fis_no", "")))
             tarih = c1.text_input("Tarih (GG.AA.YYYY)", safe_text(ai_data.get("tarih", "")))
@@ -533,15 +541,15 @@ with tab_yeni:
             
             sec_mar = c2.selectbox("İlaç", markalar, index=markalar.index(ai_mar) if ai_mar in markalar else 0)
 
+            # Form Kaydetme Butonu (Klasik Görünüm)
             if st.form_submit_button("💾 Sisteme Kaydet", use_container_width=True) and toplam_tutar > 0:
                 aktif_donem = get_donem(tarih)
                 df_k = pd.DataFrame(kisisel_masraflar) if kisisel_masraflar else pd.DataFrame()
                 
-                # YENİ ESNEME MANTIĞI: Toplam Kategori Bütçesine Göre Kontrol (İlaç Farketmez)
+                # --- YENİ ESNEME MANTIĞI: GENEL KATEGORİ LİMİTİ (+200 TL) ---
                 kategori_harcanan = df_k[(df_k['Dönem'] == aktif_donem) & (df_k['kategori'] == sec_kat)]['toplam_tutar'].sum() if not df_k.empty else 0
                 kategori_limit = kategoriler[sec_kat]['limit']
                 
-                # Sadece Kategori Genel Limiti + 200 TL Aşılırsa Hata Verir
                 if (kategori_harcanan + toplam_tutar) > (kategori_limit + 200):
                     st.error(f"❌ KATEGORİ LİMİT AŞIMI! {sec_kat} kategorisi için kalan toplam bütçeniz {(kategori_limit - kategori_harcanan):,.2f} TL. Genel kategoride en fazla 200 TL esneme payı (aşım) yapabilirsiniz.")
                 else:
