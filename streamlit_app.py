@@ -12,7 +12,6 @@ import streamlit_authenticator as stauth
 import plotly.express as px
 from fpdf import FPDF
 import re
-import os
 import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
@@ -23,13 +22,11 @@ st.set_page_config(page_title="Genveon Masraf Portalı", layout="wide", page_ico
 # --- GELİŞMİŞ MOBİL UYUM & GENEL TASARIM CSS ---
 st.markdown("""
     <style>
-        /* Ana Gövdeyi Ortala ve Klasik Web Sitesi Hissi Ver */
         .block-container {
             max-width: 1050px !important;
             padding-top: 2rem !important;
         }
         
-        /* Sekmeleri (Menüyü) Ortala ve Büyüt */
         .stTabs [data-baseweb="tab-list"] {
             justify-content: center;
             gap: 15px;
@@ -41,7 +38,6 @@ st.markdown("""
             font-weight: 500;
         }
         
-        /* Mobilde Logo ve Metinleri Ortala */
         @media (max-width: 768px) {
             [data-testid="stImage"] {
                 display: flex;
@@ -60,7 +56,6 @@ st.markdown("""
             h1, h2, h3 { text-align: center; }
         }
 
-        /* Logonun altındaki kurumsal yazı fontu */
         .kurumsal-baslik {
             font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
             color: #2c3e50;
@@ -166,10 +161,9 @@ except Exception as e:
 
 auth_status = st.session_state.get("authentication_status")
 
-# --- GİRİŞ EKRANI TASARIMI VE İZOLE EDİLMİŞ CSS HACK ---
+# --- GİRİŞ EKRANI TASARIMI (GÜNCELLENDİ) ---
 if auth_status is not True:
     
-    # KESİN ÇÖZÜM: İngilizce Login yazısını çeviren CSS, DİĞER BUTONLARI BOZMASIN DİYE SADECE BURADA ÇALIŞIR!
     st.markdown("""
         <style>
             [data-testid="stFormSubmitButton"] button p { font-size: 0px !important; }
@@ -183,10 +177,7 @@ if auth_status is not True:
     
     st.markdown("<div style='display:flex; justify-content:center; margin-bottom: 20px;'>", unsafe_allow_html=True)
     try:
-        if os.path.exists("logo.png"):
-            st.image("logo.png", width=250)
-        else:
-            st.markdown("<h1 style='color: #3498db; text-align: center;'>GENVEON</h1>", unsafe_allow_html=True)
+        st.image("logo.png", width=250)
     except:
         st.markdown("<h1 style='color: #3498db; text-align: center;'>GENVEON</h1>", unsafe_allow_html=True)
     st.markdown("</div>", unsafe_allow_html=True)
@@ -206,12 +197,9 @@ is_admin = (username == 'admin')
 col_logo, col_space, col_user = st.columns([2, 1, 2])
 with col_logo:
     try:
-        if os.path.exists("logo.png"):
-            st.image("logo.png", width=180)
-        else:
-            st.markdown("<h3 style='color: #3498db; margin:0;'>GENVEON</h3>", unsafe_allow_html=True)
+        st.image("logo.png", width=180)
     except:
-        pass
+        st.markdown("<h3 style='color: #3498db; margin:0;'>GENVEON</h3>", unsafe_allow_html=True)
 
 with col_user:
     st.markdown(f"<div style='text-align: right; padding-top:10px;'>Hoş geldin, <b>{name}</b></div>", unsafe_allow_html=True)
@@ -310,6 +298,10 @@ def get_expenses(fetch_all=False, user_id=None):
         item['İlaç'] = eslesen_ilac
         
         item['toplam_tutar'] = parse_amount(item.get('toplam_tutar', 0.0))
+        item['kdv_orani'] = float(item.get('kdv_orani', 0.0))
+        item['kdv_tutari'] = float(item.get('kdv_tutari', 0.0))
+        item['harcama_turu'] = safe_text(item.get('harcama_turu', ''))
+        
         item['isletme'] = safe_text(item.get('isletme', 'Bilinmeyen'))
         item['fis_no'] = safe_text(item.get('fis_no', ''))
         item['tarih'] = str(item.get('tarih', ''))
@@ -345,7 +337,7 @@ def create_pdf_report(df, donem, isim):
         pdf.ln()
     return bytes(pdf.output(dest='S').encode('latin-1', 'ignore'))
 
-# --- FİŞ DÜZENLEME ARAYÜZÜ (Kusursuz Görünüm İçin) ---
+# --- FİŞ DÜZENLEME ARAYÜZÜ (GELİŞMİŞ EKSİKSİZ) ---
 def render_edit_interface(df, prefix_key):
     st.markdown("#### ✏️ Fiş Düzenle veya Sil")
     df['secim_metni'] = df['isletme'] + " - " + df['toplam_tutar'].astype(str) + " TL (" + df['tarih'] + ")"
@@ -359,21 +351,25 @@ def render_edit_interface(df, prefix_key):
         
         with st.form(key=f"edit_form_{prefix_key}"):
             c1, c2 = st.columns(2)
+            
             y_isletme = c1.text_input("İşletme Adı", secilen_kayit['isletme'])
+            y_fis = c1.text_input("Fiş No", secilen_kayit.get('fis_no', ''))
             y_tarih = c1.text_input("Tarih (GG.AA.YYYY)", secilen_kayit['tarih'])
+            y_harcama_turu = c1.text_input("Harcama Türü", secilen_kayit.get('harcama_turu', ''))
             
             mevcut_kats = list(kategoriler.keys())
             idx_k = mevcut_kats.index(secilen_kayit['kategori']) if secilen_kayit['kategori'] in mevcut_kats else 0
             y_kategori = c1.selectbox("Kategori", mevcut_kats, index=idx_k)
             
             y_tutar = c2.number_input("Tutar (TL)", float(secilen_kayit['toplam_tutar']), step=10.0)
+            y_kdv_oran = c2.number_input("KDV Oranı (%)", float(secilen_kayit.get('kdv_orani', 0.0)), step=1.0)
+            y_kdv_tutar = c2.number_input("KDV Tutarı (TL)", float(secilen_kayit.get('kdv_tutari', 0.0)), step=1.0)
+            
             idx_m = markalar.index(secilen_kayit['İlaç']) if secilen_kayit['İlaç'] in markalar else 0
             y_ilac = c2.selectbox("İlaç", markalar, index=idx_m)
-            y_fis = c2.text_input("Fiş No", secilen_kayit['fis_no'])
             
             st.write("") # Boşluk
             
-            # GÜNCELLENMİŞ BUTON YERLEŞİMİ (Artık CSS'den etkilenmez ve çok şık görünür)
             col_b1, col_b2 = st.columns(2)
             btn_guncelle = col_b1.form_submit_button("💾 Güncelle", use_container_width=True, type="primary")
             btn_sil = col_b2.form_submit_button("🗑️ Sil", use_container_width=True)
@@ -381,7 +377,8 @@ def render_edit_interface(df, prefix_key):
             if btn_guncelle:
                 db.collection('masraflar').document(doc_id).update({
                     "isletme": y_isletme, "tarih": y_tarih, "kategori": y_kategori,
-                    "marka": y_ilac, "toplam_tutar": float(y_tutar), "fis_no": y_fis
+                    "marka": y_ilac, "toplam_tutar": float(y_tutar), "fis_no": y_fis,
+                    "kdv_orani": float(y_kdv_oran), "kdv_tutari": float(y_kdv_tutar), "harcama_turu": y_harcama_turu
                 })
                 st.success("Fiş başarıyla güncellendi!")
                 st.rerun()
@@ -412,7 +409,7 @@ def draw_dashboard(df_harcamalar, baslik_metni):
     mevcut_kat_listesi = list(kategoriler.keys())
     unmapped_df = df_secili[~df_secili['kategori'].isin(mevcut_kat_listesi)]
     if not unmapped_df.empty:
-        st.error("⚠️ DİKKAT: Aşağıdaki harcamaların kategorisi sistemdeki bütçelerle uyuşmuyor. Lütfen aşağıdaki sayfadan güncelleyin.")
+        st.error("⚠️ DİKKAT: Aşağıdaki harcamaların kategorisi sistemdeki bütçelerle uyuşmuyor. Lütfen 'Fiş Düzenle' kısmından güncelleyin.")
         st.dataframe(unmapped_df[['tarih', 'kategori', 'İlaç', 'isletme', 'toplam_tutar']], use_container_width=True)
 
     st.markdown("### ⏱️ Hızlı Dönem Özeti")
@@ -454,10 +451,6 @@ def draw_dashboard(df_harcamalar, baslik_metni):
             with c2:
                 st.metric("Liniga Limit", f"{(liniga_limit - lin_harcanan):,.2f} TL", delta=f"-{lin_harcanan:,.2f} TL", delta_color="inverse")
                 st.progress(min((lin_harcanan / liniga_limit) * 100, 100) / 100 if liniga_limit > 0 else 0)
-            
-            diger = kat_harcamalari[~kat_harcamalari['İlaç'].isin(['Dapgeon', 'Liniga', 'Bilinmeyen'])]
-            if not diger.empty:
-                for _, row in diger.iterrows(): st.warning(f"💊 **{row['İlaç']}** için {row['toplam_tutar']:,.2f} TL harcandı.")
         
     grafik_df = df_secili[df_secili['kategori'].isin(mevcut_kat_listesi)].groupby('İlaç')['toplam_tutar'].sum().reset_index()
     if not grafik_df.empty:
@@ -484,7 +477,7 @@ with tab_kisisel:
             st.divider()
             render_edit_interface(df_kisisel, prefix_key="kisisel")
 
-# --- 2. SEKME: YENİ FİŞ YÜKLEME ---
+# --- 2. SEKME: YENİ FİŞ YÜKLEME (GÜNCELLENDİ) ---
 with tab_yeni:
     st.markdown("<h3 style='text-align:center;'>🤖 Yapay Zeka Destekli Fiş Okuyucu</h3>", unsafe_allow_html=True)
     uploaded_file = st.file_uploader("Fotoğraf Yükle", type=['png', 'jpg', 'jpeg'])
@@ -504,7 +497,7 @@ with tab_yeni:
                     
                     prompt = f"""
                     Bu fiş görüntüsünü analiz et ve JSON ver. 
-                    Format: {{"isletme": "Ad", "fis_no": "No", "tarih": "GG.AA.YYYY", "harcama_turu": "Tür", "toplam_tutar": 150.50, "kategori": "...", "marka": "..."}}
+                    Format: {{"isletme": "Ad", "fis_no": "No", "tarih": "GG.AA.YYYY", "harcama_turu": "Tür", "toplam_tutar": 150.50, "kdv_orani": 10, "kdv_tutari": 15.05, "kategori": "...", "marka": "..."}}
                     
                     KRİTİK KURALLAR:
                     1. Kategori şunlardan biri OLMALI: {list(kategoriler.keys())}
@@ -525,28 +518,39 @@ with tab_yeni:
         
         with st.form("masraf_formu"):
             c1, c2 = st.columns(2)
+            
+            # Eksik alanlar formlara geri eklendi
             isletme = c1.text_input("İşletme Adı", safe_text(ai_data.get("isletme", "")))
+            fis_no = c1.text_input("Fiş No", safe_text(ai_data.get("fis_no", "")))
             tarih = c1.text_input("Tarih (GG.AA.YYYY)", safe_text(ai_data.get("tarih", "")))
-            toplam_tutar = c2.number_input("Tutar (TL)", float(ai_data.get("toplam_tutar", 0.0)))
+            harcama_turu = c1.text_input("Harcama Türü", safe_text(ai_data.get("harcama_turu", "")))
             
             sec_kat = c1.selectbox("Kategori", list(kategoriler.keys()), index=list(kategoriler.keys()).index(ai_kat) if ai_kat in kategoriler else 0)
+            
+            toplam_tutar = c2.number_input("Tutar (TL)", float(ai_data.get("toplam_tutar", 0.0)), step=10.0)
+            kdv_orani = c2.number_input("KDV Oranı (%)", float(ai_data.get("kdv_orani", 0.0)), step=1.0)
+            kdv_tutari = c2.number_input("KDV Tutarı (TL)", float(ai_data.get("kdv_tutari", 0.0)), step=1.0)
+            
             sec_mar = c2.selectbox("İlaç", markalar, index=markalar.index(ai_mar) if ai_mar in markalar else 0)
 
             if st.form_submit_button("💾 Sisteme Kaydet", use_container_width=True) and toplam_tutar > 0:
                 aktif_donem = get_donem(tarih)
                 df_k = pd.DataFrame(kisisel_masraflar) if kisisel_masraflar else pd.DataFrame()
-                harcanan = df_k[(df_k['Dönem'] == aktif_donem) & (df_k['kategori'] == sec_kat) & (df_k['İlaç'] == sec_mar)]['toplam_tutar'].sum() if not df_k.empty else 0
                 
-                kat_ayar = kategoriler[sec_kat]
-                limit = kat_ayar['limit'] * (kat_ayar['dapgeon_oran']/100 if sec_mar=='Dapgeon' else kat_ayar['liniga_oran']/100 if sec_mar=='Liniga' else 0)
+                # YENİ ESNEME MANTIĞI: Toplam Kategori Bütçesine Göre Kontrol (İlaç Farketmez)
+                kategori_harcanan = df_k[(df_k['Dönem'] == aktif_donem) & (df_k['kategori'] == sec_kat)]['toplam_tutar'].sum() if not df_k.empty else 0
+                kategori_limit = kategoriler[sec_kat]['limit']
                 
-                if sec_mar in ['Dapgeon', 'Liniga'] and (toplam_tutar > (limit - harcanan) + 200):
-                    st.error(f"❌ LİMİT AŞIMI! Kalan: {(limit - harcanan):,.2f} TL. En fazla 200 TL esneyebilir.")
+                # Sadece Kategori Genel Limiti + 200 TL Aşılırsa Hata Verir
+                if (kategori_harcanan + toplam_tutar) > (kategori_limit + 200):
+                    st.error(f"❌ KATEGORİ LİMİT AŞIMI! {sec_kat} kategorisi için kalan toplam bütçeniz {(kategori_limit - kategori_harcanan):,.2f} TL. Genel kategoride en fazla 200 TL esneme payı (aşım) yapabilirsiniz.")
                 else:
                     db.collection('masraflar').add({
                         "username": username, "kullanici_adi": name, "tarih": tarih,
                         "isletme": isletme, "kategori": sec_kat, "marka": sec_mar, 
-                        "toplam_tutar": float(toplam_tutar), "gorsel_b64": compress_and_encode_image(image),
+                        "toplam_tutar": float(toplam_tutar), "kdv_orani": float(kdv_orani),
+                        "kdv_tutari": float(kdv_tutari), "fis_no": fis_no, "harcama_turu": harcama_turu,
+                        "gorsel_b64": compress_and_encode_image(image),
                         "timestamp": firestore.SERVER_TIMESTAMP
                     })
                     st.success("✅ Kaydedildi!")
@@ -616,3 +620,5 @@ if is_admin:
             with st.expander(f"{b.get('zaman', '')} - {b.get('kullanici', '')}"):
                 st.write(f"**Kullanıcının Sorunu:** {b.get('sorun', '')}")
                 st.write(f"**Yapay Zeka Teşhisi:** {b.get('ai_analizi', 'Analiz yapılamadı.')}")
+
+
