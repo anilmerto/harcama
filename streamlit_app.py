@@ -281,4 +281,435 @@ def get_expenses(fetch_all=False, user_id=None):
         item = doc.to_dict()
         item['id'] = doc.id
         
-        ham_kat =
+        ham_kat = str(item.get('kategori', 'Bilinmeyen')).strip()
+        eslesen_kat = ham_kat
+        for mk in mevcut_kategoriler:
+            if normalize_str(mk) == normalize_str(ham_kat): eslesen_kat = mk; break
+        item['kategori'] = eslesen_kat
+        
+        ham_ilac = str(item.get('marka', 'Bilinmeyen')).strip()
+        eslesen_ilac = ham_ilac
+        for mi in markalar:
+            if normalize_str(mi) == normalize_str(ham_ilac): eslesen_ilac = mi; break
+        item['İlaç'] = eslesen_ilac
+        
+        item['toplam_tutar'] = parse_amount(item.get('toplam_tutar', 0.0))
+        item['kdv_orani'] = float(item.get('kdv_orani', 0.0))
+        item['kdv_tutari'] = float(item.get('kdv_tutari', 0.0))
+        item['harcama_turu'] = safe_text(item.get('harcama_turu', ''))
+        item['isletme'] = safe_text(item.get('isletme', 'Bilinmeyen'))
+        item['fis_no'] = safe_text(item.get('fis_no', ''))
+        item['tarih'] = str(item.get('tarih', ''))
+        item['kullanici_adi'] = str(item.get('kullanici_adi', 'Bilinmeyen'))
+        
+        kayitli_donem = item.get('Dönem', '')
+        if kayitli_donem in TUM_DONEMLER:
+            item['Dönem'] = kayitli_donem
+        else:
+            item['Dönem'] = calculate_period_from_date(item['tarih'])
+            
+        data.append(item)
+    return data
+
+def create_pdf_report(df, donem, isim):
+    pdf = FPDF()
+    pdf.add_page()
+    pdf.set_font("Arial", 'B', 16)
+    pdf.cell(0, 10, safe_text(f"Harcama Raporu - {isim}"), ln=True, align='C')
+    pdf.set_font("Arial", '', 12)
+    pdf.cell(0, 10, safe_text(f"Donem: {donem}"), ln=True, align='C')
+    pdf.ln(10)
+    
+    toplam = df['toplam_tutar'].sum() if not df.empty and 'toplam_tutar' in df.columns else 0.0
+    pdf.cell(0, 10, safe_text(f"Toplam Harcama: {toplam:,.2f} TL"), ln=True)
+    pdf.ln(5)
+    pdf.set_font("Arial", 'B', 10)
+    col_widths = [25, 35, 35, 65, 30]
+    headers = ["Tarih", "Kategori", "Ilac", "Isletme", "Tutar(TL)"]
+    for w, h in zip(col_widths, headers): pdf.cell(w, 10, h, border=1, align='C')
+    pdf.ln()
+    pdf.set_font("Arial", '', 9)
+    if not df.empty:
+        for _, row in df.iterrows():
+            pdf.cell(col_widths[0], 10, safe_text(row.get('tarih', '')), border=1)
+            pdf.cell(col_widths[1], 10, safe_text(row.get('kategori', ''))[:18], border=1)
+            pdf.cell(col_widths[2], 10, safe_text(row.get('İlaç', ''))[:18], border=1)
+            pdf.cell(col_widths[3], 10, safe_text(row.get('isletme', ''))[:35], border=1)
+            pdf.cell(col_widths[4], 10, f"{row.get('toplam_tutar', 0.0):,.2f}", border=1, align='R')
+            pdf.ln()
+    return bytes(pdf.output(dest='S').encode('latin-1', 'ignore'))
+
+def render_edit_interface(df, prefix_key):
+    st.markdown("#### ✏️ Fiş Düzenle veya Sil")
+    if df.empty or 'isletme' not in df.columns:
+        st.info("Düzenlenecek fiş bulunmuyor.")
+        return
+        
+    df['secim_metni'] = df['isletme'] + " - " + df['toplam_tutar'].astype(str) + " TL (" + df['tarih'] + ") [" + df['Dönem'] + "]"
+    secim_listesi = ["Bir fiş seçin..."] + df['secim_metni'].tolist()
+    
+    secilen_metin = st.selectbox("İşlem yapılacak fişi seçin:", secim_listesi, key=f"edit_select_{prefix_key}")
+    
+    if secilen_metin != "Bir fiş seçin...":
+        secilen_kayit = df[df['secim_metni'] == secilen_metin].iloc[0]
+        doc_id = secilen_kayit['id']
+        
+        with st.form(key=f"edit_form_{prefix_key}"):
+            c1, c2 = st.columns(2)
+            
+            mevcut_donem = secilen_kayit.get('Dönem', get_current_period_string())
+            idx_donem = TUM_DONEMLER.index(mevcut_donem) if mevcut_donem in TUM_DONEMLER else 0
+            y_donem = c1.selectbox("Fişin Ait Olduğu Dönem", TUM_DONEMLER, index=idx_donem)
+            
+            y_isletme = c1.text_input("İşletme Adı", secilen_kayit.get('isletme', ''))
+            y_fis = c1.text_input("Fiş No", secilen_kayit.get('fis_no', ''))
+            y_tarih = c1.text_input("Tarih (GG.AA.YYYY)", secilen_kayit.get('tarih', ''))
+            y_harcama_turu = c1.text_input("Harcama Türü", secilen_kayit.get('harcama_turu', ''))
+            
+            mevcut_kats = list(genel_kategoriler.keys())
+            idx_k = mevcut_kats.index(secilen_kayit['kategori']) if secilen_kayit.get('kategori') in mevcut_kats else 0
+            y_kategori = c2.selectbox("Kategori", mevcut_kats, index=idx_k)
+            
+            y_tutar = c2.number_input("Tutar (TL)", float(secilen_kayit.get('toplam_tutar', 0.0)), step=10.0)
+            y_kdv_oran = c2.number_input("KDV Oranı (%)", float(secilen_kayit.get('kdv_orani', 0.0)), step=1.0)
+            y_kdv_tutar = c2.number_input("KDV Tutarı (TL)", float(secilen_kayit.get('kdv_tutari', 0.0)), step=1.0)
+            
+            idx_m = markalar.index(secilen_kayit['İlaç']) if secilen_kayit.get('İlaç') in markalar else 0
+            y_ilac = c2.selectbox("İlaç", markalar, index=idx_m)
+            
+            st.write("") 
+            col_b1, col_b2 = st.columns(2)
+            btn_guncelle = col_b1.form_submit_button("💾 Güncelle", use_container_width=True, type="primary")
+            btn_sil = col_b2.form_submit_button("🗑️ Sil", use_container_width=True)
+            
+            if btn_guncelle:
+                db.collection('masraflar').document(doc_id).update({
+                    "Dönem": y_donem, "isletme": y_isletme, "tarih": y_tarih, "kategori": y_kategori,
+                    "marka": y_ilac, "toplam_tutar": float(y_tutar), "fis_no": y_fis,
+                    "kdv_orani": float(y_kdv_oran), "kdv_tutari": float(y_kdv_tutar), "harcama_turu": y_harcama_turu
+                })
+                st.success("Fiş başarıyla güncellendi!")
+                st.rerun()
+            if btn_sil:
+                db.collection('masraflar').document(doc_id).delete()
+                st.success("Fiş tamamen silindi!")
+                st.rerun()
+                
+        if pd.notna(secilen_kayit.get('gorsel_b64')):
+            st.image(base64.b64decode(secilen_kayit['gorsel_b64']), caption="Seçili Fiş Görseli", width=300)
+
+def draw_dashboard(df_harcamalar, baslik_metni):
+    try:
+        st.markdown(f"<h2 style='text-align: center;'>{baslik_metni}</h2>", unsafe_allow_html=True)
+        
+        guncel_donem_str = get_current_period_string()
+        
+        if df_harcamalar.empty:
+            mevcut_donemler = [guncel_donem_str]
+        else:
+            mevcut_donemler = df_harcamalar['Dönem'].unique().tolist()
+            if guncel_donem_str not in mevcut_donemler:
+                mevcut_donemler.append(guncel_donem_str)
+                
+        donemler = sorted(mevcut_donemler, key=lambda x: TUM_DONEMLER.index(x) if x in TUM_DONEMLER else -1)
+        idx_guncel = donemler.index(guncel_donem_str) if guncel_donem_str in donemler else 0
+
+        secilen_donem = st.selectbox(f"📅 İncelenecek Dönemi Seçin", donemler, index=idx_guncel, key=f"donem_secici_{baslik_metni}")
+        
+        if not df_harcamalar.empty and 'Dönem' in df_harcamalar.columns:
+            df_secili = df_harcamalar[df_harcamalar['Dönem'] == secilen_donem].copy()
+        else:
+            df_secili = pd.DataFrame()
+        
+        mevcut_kat_listesi = list(genel_kategoriler.keys())
+        
+        if not df_secili.empty and 'kategori' in df_secili.columns:
+            unmapped_df = df_secili[~df_secili['kategori'].isin(mevcut_kat_listesi)]
+            if not unmapped_df.empty:
+                st.error("⚠️ DİKKAT: Aşağıdaki harcamaların kategorisi sistemdeki bütçelerle uyuşmuyor. Lütfen 'Fiş Düzenle' kısmından güncelleyin.")
+
+        donem_butcesi = get_budget_for_period(secilen_donem)
+        if not donem_butcesi: # Güvenlik önlemi
+            donem_butcesi = {"Genel": {"limit": 0, "dapgeon_oran": 50, "liniga_oran": 50}}
+
+        st.markdown(f"### ⏱️ {secilen_donem} Özeti")
+        rapor_kolonlari = st.columns(len(donem_butcesi))
+        for idx, (kat_adi, ayar) in enumerate(donem_butcesi.items()):
+            with rapor_kolonlari[idx]:
+                with st.container(border=True): 
+                    limit = ayar['limit']
+                    if not df_secili.empty and 'kategori' in df_secili.columns and 'toplam_tutar' in df_secili.columns:
+                        harcanan = df_secili[df_secili['kategori'] == kat_adi]['toplam_tutar'].sum()
+                    else:
+                        harcanan = 0.0
+                    kalan = limit - harcanan
+                    st.markdown(f"<div style='text-align:center;'><b>📂 {kat_adi}</b></div>", unsafe_allow_html=True)
+                    st.metric(label="Kalan Bütçe", value=f"{kalan:,.2f} TL", delta=f"-{harcanan:,.2f} TL", delta_color="inverse")
+        
+        st.divider()
+        safe_isim = re.sub(r'[^A-Za-z0-9_]', '', baslik_metni.replace("👤 ", "").replace("👑 ", "").replace(' ', '_'))
+        safe_donem = re.sub(r'[^A-Za-z0-9_]', '', secilen_donem.replace(' ', '_'))
+        c1, c2, c3 = st.columns([1,2,1])
+        with c2:
+            if not df_secili.empty:
+                st.download_button("📄 Dönem Raporunu İndir (PDF)", create_pdf_report(df_secili, secilen_donem, safe_isim), file_name=f"Rapor_{safe_isim}_{safe_donem}.pdf", mime="application/pdf", use_container_width=True)
+        st.divider()
+
+        # KESİN ÇÖZÜM: Bütçe limitleri, df_secili BOŞ OLSA BİLE her zaman gösterilecek!
+        harcama_ozeti = df_secili.groupby(['kategori', 'İlaç'])['toplam_tutar'].sum().reset_index() if not df_secili.empty and 'kategori' in df_secili.columns else pd.DataFrame()
+        
+        for kat_adi, ayar in donem_butcesi.items():
+            with st.expander(f"📊 {kat_adi} Kategorisi Detayları (Ayrılan: {ayar['limit']:,.0f} TL)", expanded=True):
+                dapgeon_limit = ayar['limit'] * (ayar['dapgeon_oran'] / 100)
+                liniga_limit = ayar['limit'] * (ayar['liniga_oran'] / 100)
+                
+                if not harcama_ozeti.empty and 'kategori' in harcama_ozeti.columns:
+                    kat_harcamalari = harcama_ozeti[harcama_ozeti['kategori'] == kat_adi]
+                    dap_harcanan = kat_harcamalari[kat_harcamalari['İlaç'] == 'Dapgeon']['toplam_tutar'].sum() if not kat_harcamalari.empty else 0.0
+                    lin_harcanan = kat_harcamalari[kat_harcamalari['İlaç'] == 'Liniga']['toplam_tutar'].sum() if not kat_harcamalari.empty else 0.0
+                else:
+                    dap_harcanan = 0.0
+                    lin_harcanan = 0.0
+                    
+                c1, c2 = st.columns(2)
+                with c1:
+                    st.metric("Dapgeon Limit", f"{(dapgeon_limit - dap_harcanan):,.2f} TL", delta=f"-{dap_harcanan:,.2f} TL", delta_color="inverse")
+                    st.progress(min((dap_harcanan / dapgeon_limit) * 100, 100) / 100 if dapgeon_limit > 0 else 0.0)
+                with c2:
+                    st.metric("Liniga Limit", f"{(liniga_limit - lin_harcanan):,.2f} TL", delta=f"-{lin_harcanan:,.2f} TL", delta_color="inverse")
+                    st.progress(min((lin_harcanan / liniga_limit) * 100, 100) / 100 if liniga_limit > 0 else 0.0)
+                
+        if not df_secili.empty and 'İlaç' in df_secili.columns:
+            grafik_df = df_secili[df_secili['kategori'].isin(mevcut_kat_listesi)].groupby('İlaç')['toplam_tutar'].sum().reset_index()
+            if not grafik_df.empty:
+                fig = px.pie(grafik_df, values='toplam_tutar', names='İlaç', hole=0.4, title="İlaç Dağılımı")
+                st.plotly_chart(fig, use_container_width=True, key=f"pie_{baslik_metni}")
+    except Exception as e:
+        st.error(f"Pano çizilirken bir hata oluştu: {e}")
+
+# --- ANA SEKMELER ---
+if is_admin:
+    tabs = st.tabs(["👤 Kendi Harcamalarım", "➕ Yeni Fiş Yükle", "👑 Tüm Ekip", "⚙️ Ayarlar", "🚨 Destek"])
+    tab_kisisel, tab_yeni, tab_ekip, tab_ayarlar, tab_destek = tabs
+else:
+    tabs = st.tabs(["👤 Kendi Harcamalarım", "➕ Yeni Fiş Yükle", "🚨 Destek"])
+    tab_kisisel, tab_yeni, tab_destek = tabs[0], tabs[1], tabs[2]
+
+# --- 1. SEKME: KİŞİSEL PANEL ---
+with tab_kisisel:
+    try:
+        kisisel_masraflar = get_expenses(fetch_all=False, user_id=username)
+        df_kisisel = pd.DataFrame(kisisel_masraflar) if kisisel_masraflar else pd.DataFrame()
+        draw_dashboard(df_kisisel, f"👤 Kendi Bütçem")
+        
+        if not df_kisisel.empty and 'isletme' in df_kisisel.columns:
+            with st.expander("📋 Geçmiş Harcamalar & Fiş Düzenleme Listesi", expanded=False):
+                st.dataframe(df_kisisel[["Dönem", "tarih", "kategori", "İlaç", "isletme", "toplam_tutar"]], use_container_width=True)
+                st.divider()
+                render_edit_interface(df_kisisel, prefix_key="kisisel")
+    except Exception as e:
+        st.error(f"Kişisel panel yüklenirken hata oluştu: {e}")
+
+# --- 2. SEKME: YENİ FİŞ YÜKLEME ---
+with tab_yeni:
+    try:
+        st.markdown("<h3 style='text-align:center;'>➕ Yeni Fiş Ekleme</h3>", unsafe_allow_html=True)
+        
+        st.markdown("#### 1. Fişin Ait Olduğu Dönemi Seçin")
+        varsayilan_donem = get_current_period_string()
+        idx_varsayilan = TUM_DONEMLER.index(varsayilan_donem) if varsayilan_donem in TUM_DONEMLER else 0
+        secilen_hedef_donem = st.selectbox("Fişin Kaydedileceği Dönem:", TUM_DONEMLER, index=idx_varsayilan)
+        
+        st.markdown(f"#### 💰 Seçili Dönem İçin Güncel Bütçeniz ({secilen_hedef_donem})")
+        df_k = pd.DataFrame(kisisel_masraflar) if kisisel_masraflar else pd.DataFrame()
+        if not df_k.empty and 'Dönem' in df_k.columns: 
+            df_donem = df_k[df_k['Dönem'] == secilen_hedef_donem]
+        else: 
+            df_donem = pd.DataFrame()
+
+        donem_butcesi_form = get_budget_for_period(secilen_hedef_donem)
+        if not donem_butcesi_form: donem_butcesi_form = {"Genel": {"limit": 0, "dapgeon_oran": 50, "liniga_oran": 50}}
+        
+        b_cols = st.columns(len(donem_butcesi_form))
+        for idx, (kat_adi, ayar) in enumerate(donem_butcesi_form.items()):
+            with b_cols[idx]:
+                kat_limit = ayar['limit']
+                if not df_donem.empty and 'kategori' in df_donem.columns:
+                    kat_harcanan = df_donem[df_donem['kategori'] == kat_adi]['toplam_tutar'].sum()
+                    dap_harc = df_donem[(df_donem['kategori'] == kat_adi) & (df_donem['İlaç'] == 'Dapgeon')]['toplam_tutar'].sum()
+                    lin_harc = df_donem[(df_donem['kategori'] == kat_adi) & (df_donem['İlaç'] == 'Liniga')]['toplam_tutar'].sum()
+                else:
+                    kat_harcanan = 0.0
+                    dap_harc = 0.0
+                    lin_harc = 0.0
+                    
+                dap_limit = kat_limit * (ayar['dapgeon_oran']/100)
+                lin_limit = kat_limit * (ayar['liniga_oran']/100)
+                genel_kalan = kat_limit - kat_harcanan
+                renk = "green" if genel_kalan >= 0 else "red"
+                
+                st.markdown(f"""
+                <div class="budget-card">
+                    <div class="budget-title">📂 {kat_adi}</div>
+                    <div class="budget-row"><span>Genel Kalan:</span><strong style="color:{renk}">{genel_kalan:,.2f} TL</strong></div>
+                    <div class="budget-row" style="color:#7f8c8d;"><span>↳ Dapgeon:</span><span>{(dap_limit - dap_harc):,.2f} TL</span></div>
+                    <div class="budget-row" style="color:#7f8c8d;"><span>↳ Liniga:</span><span>{(lin_limit - lin_harc):,.2f} TL</span></div>
+                </div>
+                """, unsafe_allow_html=True)
+                
+        st.divider()
+
+        st.markdown("#### 2. Fiş Yükle ve Bilgileri Gir")
+        uploaded_file = st.file_uploader("Fotoğraf Yükle", type=['png', 'jpg', 'jpeg'])
+
+        if uploaded_file is not None:
+            image = Image.open(uploaded_file)
+            st.image(image, use_container_width=True)
+            
+            file_bytes = uploaded_file.getvalue()
+            if st.session_state.get('last_uploaded') != file_bytes:
+                st.session_state['last_uploaded'] = file_bytes
+                with st.spinner("Yapay Zeka Analiz Ediyor..."):
+                    try:
+                        model = genai.GenerativeModel('gemini-2.5-flash')
+                        current_date = datetime.now().strftime("%d.%m.%Y")
+                        current_year = datetime.now().year
+                        prompt = f"""
+                        Bu fiş görüntüsünü analiz et ve JSON ver. 
+                        Format: {{"isletme": "Ad", "fis_no": "No", "tarih": "GG.AA.YYYY", "harcama_turu": "Tür", "toplam_tutar": 150.50, "kdv_orani": 10, "kdv_tutari": 15.05, "kategori": "...", "marka": "..."}}
+                        KRİTİK KURALLAR:
+                        1. Kategori şunlardan biri OLMALI: {list(genel_kategoriler.keys())}
+                        2. İlaç şunlardan biri OLMALI: {markalar}
+                        3. ZAMAN BİLİNCİ: Bugünün tarihi {current_date}. Fişteki tarihi okurken yılı karıştırırsan veya eski okursan (örn: 2024), mantıken içinde bulunduğumuz {current_year} yılı olarak DÜZELT!
+                        """
+                        response = model.generate_content([prompt, image])
+                        json_str = response.text.replace("```json", "").replace("```", "").strip()
+                        st.session_state['ai_data'] = json.loads(json_str)
+                        st.success("Analiz tamam! Lütfen bilgileri kontrol edip kaydedin.")
+                    except Exception as e:
+                        send_email_to_admin("Yapay Zeka Okuma Hatası", f"Kullanıcı: {name}\nHata: {str(e)}")
+                        st.error("Okuma hatası oluştu, lütfen manuel giriniz.")
+            
+            ai_data = st.session_state.get('ai_data', {})
+            ai_kat = ai_data.get("kategori", list(genel_kategoriler.keys())[0] if genel_kategoriler else "Bilinmeyen")
+            ai_mar = ai_data.get("marka", markalar[0] if markalar else "Bilinmeyen")
+            
+            with st.form("masraf_formu"):
+                c1, c2 = st.columns(2)
+                isletme = c1.text_input("İşletme Adı", safe_text(ai_data.get("isletme", "")))
+                fis_no = c1.text_input("Fiş No", safe_text(ai_data.get("fis_no", "")))
+                tarih = c1.text_input("Tarih (GG.AA.YYYY)", safe_text(ai_data.get("tarih", "")))
+                harcama_turu = c1.text_input("Harcama Türü", safe_text(ai_data.get("harcama_turu", "")))
+                
+                mevcut_kats_form = list(genel_kategoriler.keys())
+                sec_kat = c1.selectbox("Kategori", mevcut_kats_form, index=mevcut_kats_form.index(ai_kat) if ai_kat in mevcut_kats_form else 0)
+                
+                toplam_tutar = c2.number_input("Tutar (TL)", float(ai_data.get("toplam_tutar", 0.0)), step=10.0)
+                kdv_orani = c2.number_input("KDV Oranı (%)", float(ai_data.get("kdv_orani", 0.0)), step=1.0)
+                kdv_tutari = c2.number_input("KDV Tutarı (TL)", float(ai_data.get("kdv_tutari", 0.0)), step=1.0)
+                sec_mar = c2.selectbox("İlaç", markalar, index=markalar.index(ai_mar) if ai_mar in markalar else 0)
+
+                if st.form_submit_button("💾 Sisteme Kaydet", use_container_width=True) and toplam_tutar > 0:
+                    if not df_donem.empty and 'kategori' in df_donem.columns:
+                        kategori_harcanan = df_donem[df_donem['kategori'] == sec_kat]['toplam_tutar'].sum()
+                    else:
+                        kategori_harcanan = 0.0
+                        
+                    kategori_limit = donem_butcesi_form[sec_kat]['limit'] if sec_kat in donem_butcesi_form else 0.0
+                    
+                    if (kategori_harcanan + toplam_tutar) > (kategori_limit + 200):
+                        st.error(f"❌ KATEGORİ LİMİT AŞIMI! {sec_kat} kategorisi için kalan toplam bütçeniz {(kategori_limit - kategori_harcanan):,.2f} TL. En fazla 200 TL esneme payı yapabilirsiniz.")
+                    else:
+                        db.collection('masraflar').add({
+                            "username": username, "kullanici_adi": name, "tarih": tarih,
+                            "Dönem": secilen_hedef_donem, 
+                            "isletme": isletme, "kategori": sec_kat, "marka": sec_mar, 
+                            "toplam_tutar": float(toplam_tutar), "kdv_orani": float(kdv_orani),
+                            "kdv_tutari": float(kdv_tutari), "fis_no": fis_no, "harcama_turu": harcama_turu,
+                            "gorsel_b64": compress_and_encode_image(image),
+                            "timestamp": firestore.SERVER_TIMESTAMP
+                        })
+                        st.success(f"✅ Fiş Başarıyla '{secilen_hedef_donem}' dönemine kaydedildi!")
+                        st.session_state['last_uploaded'] = None
+                        st.rerun()
+    except Exception as e:
+         st.error(f"Yeni fiş yükleme ekranında hata oluştu: {e}")
+
+# --- 3. SEKME: DESTEK & SORUN BİLDİR ---
+with tab_destek:
+    st.markdown("<h3 style='text-align:center;'>🚨 Sistem Destek & Sorun Bildirimi</h3>", unsafe_allow_html=True)
+    st.info("Sistemde bir hata, yanlış bir kayıt veya ekleyemediğiniz bir fiş mi var? Buradan yazın, yapay zeka analiz edip yöneticiye iletecektir.")
+    with st.form("sorun_formu"):
+        sorun_metni = st.text_area("Karşılaştığınız sorunu detaylıca açıklayın:")
+        if st.form_submit_button("Yöneticiye İlet", use_container_width=True):
+            if sorun_metni:
+                with st.spinner("Yapay zeka sorununuzu analiz ediyor..."):
+                    try:
+                        model = genai.GenerativeModel('gemini-2.5-flash')
+                        prompt = f"Kullanıcı sorunu: '{sorun_metni}'. Uygulama yetkilisi için çözüm önerisi yaz."
+                        ai_analiz = model.generate_content(prompt).text
+                        bildirim = {"kullanici": name, "sorun": sorun_metni, "ai_analizi": ai_analiz, "zaman": datetime.now().strftime("%d.%m.%Y %H:%M")}
+                        db.collection('sorun_bildirimleri').add(bildirim)
+                        send_email_to_admin("Yeni Sorun Bildirimi", f"Kullanıcı: {name}\nSorun: {sorun_metni}\n\nAI Analizi:\n{ai_analiz}")
+                        st.success("Sorununuz analiz edildi ve yöneticiye güvenli bir şekilde iletildi.")
+                    except:
+                        db.collection('sorun_bildirimleri').add({"kullanici": name, "sorun": sorun_metni})
+                        st.success("Mesajınız başarıyla iletildi.")
+
+# --- ADMIN SEKMELERİ ---
+if is_admin:
+    with tab_ekip:
+        try:
+            tm = get_expenses(True)
+            draw_dashboard(pd.DataFrame(tm), "👑 Tüm Ekip Harcamaları")
+            df_tum = pd.DataFrame(tm)
+            if not df_tum.empty and 'isletme' in df_tum.columns:
+                with st.expander("📋 Tüm Ekibin Geçmiş Harcamaları & Fiş Düzenleme", expanded=False):
+                    st.dataframe(df_tum[["Dönem", "kullanici_adi", "tarih", "kategori", "İlaç", "isletme", "toplam_tutar"]], use_container_width=True)
+                    st.divider()
+                    render_edit_interface(df_tum, prefix_key="admin")
+        except Exception as e:
+             st.error(f"Ekip paneli yüklenirken hata: {e}")
+        
+    with tab_ayarlar:
+        st.markdown("<h3 style='text-align:center;'>⚙️ Dönemsel Bütçe Ayarları</h3>", unsafe_allow_html=True)
+        
+        guncel_secim = get_current_period_string()
+        idx_ayar = TUM_DONEMLER.index(guncel_secim) if guncel_secim in TUM_DONEMLER else 0
+        secilen_ayar_donemi = st.selectbox("Bütçesi Ayarlanacak Dönem:", TUM_DONEMLER, index=idx_ayar)
+        
+        secili_donem_butcesi = get_budget_for_period(secilen_ayar_donemi)
+        if not secili_donem_butcesi: secili_donem_butcesi = genel_kategoriler
+        
+        with st.form("ayar_form"):
+            yk = {}
+            for k, a in genel_kategoriler.items():
+                st.markdown(f"**{k} Kategorisi**")
+                mevcut_limit = secili_donem_butcesi.get(k, a).get('limit', 0.0)
+                mevcut_dap = secili_donem_butcesi.get(k, a).get('dapgeon_oran', 50)
+                
+                lim = st.number_input(f"Toplam Limit (TL)", float(mevcut_limit), key=f"l_{k}")
+                dap = st.slider(f"Dapgeon Payı (%) - Geri Kalanı Liniga Olur", 0, 100, int(mevcut_dap), key=f"o_{k}")
+                
+                yk[k] = {"limit": lim, "dapgeon_oran": dap, "liniga_oran": 100-dap}
+                st.divider()
+                
+            if st.form_submit_button(f"'{secilen_ayar_donemi}' İçin Bütçeyi Kaydet", type="primary", use_container_width=True):
+                butceler[secilen_ayar_donemi] = yk
+                yeni_ayarlar = {"kategoriler": genel_kategoriler, "markalar": markalar, "butceler": butceler}
+                save_system_settings(yeni_ayarlar)
+                st.session_state['sistem_ayarlari'] = yeni_ayarlar
+                st.success("Bütçe başarıyla kaydedildi!")
+                st.rerun()
+                
+        st.divider()
+        st.subheader("🚨 Gelen Sorun Bildirimleri")
+        try:
+            docs = db.collection('sorun_bildirimleri').order_by('zaman', direction=firestore.Query.DESCENDING).limit(10).stream()
+            for d in docs:
+                b = d.to_dict()
+                with st.expander(f"{b.get('zaman', '')} - {b.get('kullanici', '')}"):
+                    st.write(f"**Kullanıcının Sorunu:** {b.get('sorun', '')}")
+                    st.write(f"**Yapay Zeka Teşhisi:** {b.get('ai_analizi', 'Analiz yapılamadı.')}")
+        except Exception:
+             st.info("Henüz bildirim bulunmuyor.")
