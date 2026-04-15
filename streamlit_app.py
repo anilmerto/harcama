@@ -24,10 +24,9 @@ st.set_page_config(page_title="Genveon Masraf Portalı", layout="wide", page_ico
 st.markdown("""
     <style>
         .block-container {
-            max-width: 1050px !important;
+            max-width: 1100px !important;
             padding-top: 2rem !important;
         }
-        
         .stTabs [data-baseweb="tab-list"] {
             justify-content: center;
             gap: 15px;
@@ -38,7 +37,6 @@ st.markdown("""
             padding: 12px 20px;
             font-weight: 500;
         }
-        
         @media (max-width: 768px) {
             [data-testid="stImage"] {
                 display: flex;
@@ -56,7 +54,6 @@ st.markdown("""
             }
             h1, h2, h3 { text-align: center; }
         }
-
         .kurumsal-baslik {
             font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
             color: #2c3e50;
@@ -67,6 +64,28 @@ st.markdown("""
             margin-bottom: 30px;
             letter-spacing: 1px;
         }
+        /* Anlık Bütçe Kartları CSS */
+        .budget-card {
+            background-color: #f8f9fa;
+            border: 1px solid #e0e6ed;
+            border-radius: 8px;
+            padding: 15px;
+            margin-bottom: 10px;
+        }
+        .budget-title {
+            color: #2c3e50;
+            font-weight: bold;
+            font-size: 1.1rem;
+            margin-bottom: 10px;
+            border-bottom: 1px solid #dcdde1;
+            padding-bottom: 5px;
+        }
+        .budget-row {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 4px;
+            font-size: 0.95rem;
+        }
     </style>
 """, unsafe_allow_html=True)
 
@@ -76,13 +95,11 @@ def send_email_to_admin(konu, mesaj):
         sender_email = st.secrets["email"]["address"]
         sender_pass = st.secrets["email"]["password"]
         receiver_email = "anilmertocak@gmail.com"
-        
         msg = MIMEMultipart()
         msg['From'] = sender_email
         msg['To'] = receiver_email
         msg['Subject'] = f"Genveon Portal: {konu}"
         msg.attach(MIMEText(mesaj, 'plain', 'utf-8'))
-        
         server = smtplib.SMTP('smtp.gmail.com', 587)
         server.starttls()
         server.login(sender_email, sender_pass)
@@ -135,101 +152,36 @@ ayarlar = st.session_state['sistem_ayarlari']
 kategoriler = ayarlar['kategoriler']
 markalar = ayarlar['markalar']
 
-# --- KİMLİK DOĞRULAMA (LOGIN) SİSTEMİ ---
-try:
-    credentials_dict = {"usernames": {}}
-    users = dict(st.secrets["credentials"]["usernames"])
-    
-    for u_name, u_info in users.items():
-        plain_pass = str(u_info["password"]).strip()
-        credentials_dict["usernames"][u_name] = {
-            "email": u_info.get("email", ""),
-            "name": u_info.get("name", u_name),
-            "password": plain_pass
-        }
+# --- KESİN DÖNEM LİSTESİ OLUŞTURUCU (2024-2027) ---
+@st.cache_data
+def get_all_periods():
+    aylar = ["", "Ocak", "Şubat", "Mart", "Nisan", "Mayıs", "Haziran", "Temmuz", "Ağustos", "Eylül", "Ekim", "Kasım", "Aralık"]
+    periods = []
+    for year in range(2024, 2028):
+        for month in range(1, 13):
+            next_month = month + 1 if month < 12 else 1
+            next_year = year if month < 12 else year + 1
+            periods.append(f"15 {aylar[month]} {year} - 15 {aylar[next_month]} {next_year}")
+    return periods
 
-    stauth.Hasher.hash_passwords(credentials_dict)
-    authenticator = stauth.Authenticate(
-        credentials_dict,
-        st.secrets["cookie"]["name"],
-        st.secrets["cookie"]["key"],
-        st.secrets["cookie"]["expiry_days"]
-    )
-except Exception as e:
-    send_email_to_admin("KRİTİK HATA: Login Sistemi Çöktü", f"Giriş sistemi başlatılamadı.\nHata: {str(e)}")
-    st.error("Giriş sistemi yapılandırılamadı.")
-    st.stop()
+TUM_DONEMLER = get_all_periods()
 
-auth_status = st.session_state.get("authentication_status")
+def get_current_period_string():
+    now = datetime.now()
+    day, month, year = now.day, now.month, now.year
+    aylar = ["", "Ocak", "Şubat", "Mart", "Nisan", "Mayıs", "Haziran", "Temmuz", "Ağustos", "Eylül", "Ekim", "Kasım", "Aralık"]
+    if day >= 15:
+        bas_ay, bas_yil = month, year
+        bit_ay = month + 1 if month < 12 else 1
+        bit_yil = year if month < 12 else year + 1
+    else:
+        bas_ay = month - 1 if month > 1 else 12
+        bas_yil = year if month > 1 else year - 1
+        bit_ay, bit_yil = month, year
+    return f"15 {aylar[bas_ay]} {bas_yil} - 15 {aylar[bit_ay]} {bit_yil}"
 
-# --- GİRİŞ EKRANI TASARIMI VE İZOLE EDİLMİŞ CSS HACK ---
-if auth_status is not True:
-    
-    # Sadece giriş butonunu Türkçeleştir, diğerlerini bozma!
-    st.markdown("""
-        <style>
-            [data-testid="stFormSubmitButton"] button p { font-size: 0px !important; }
-            [data-testid="stFormSubmitButton"] button p::before {
-                content: "Sisteme Giriş Yap";
-                font-size: 16px !important;
-                visibility: visible;
-            }
-        </style>
-    """, unsafe_allow_html=True)
-    
-    st.markdown("<div style='display:flex; justify-content:center; margin-bottom: 20px;'>", unsafe_allow_html=True)
-    try:
-        if os.path.exists("logo.png"):
-            st.image("logo.png", width=250)
-        else:
-            st.markdown("<h1 style='color: #3498db; text-align: center;'>GENVEON</h1>", unsafe_allow_html=True)
-    except:
-        st.markdown("<h1 style='color: #3498db; text-align: center;'>GENVEON</h1>", unsafe_allow_html=True)
-    st.markdown("</div>", unsafe_allow_html=True)
-    
-    st.markdown("<div class='kurumsal-baslik'>Masraf Takip Uygulaması</div>", unsafe_allow_html=True)
-    
-    col1, col2, col3 = st.columns([1, 2, 1])
-    with col2:
-        authenticator.login()
-    st.stop()
-
-# --- GİRİŞ BAŞARILI SONRASI (ÜST NAVİGASYON / LOGO) ---
-name = st.session_state.get("name")
-username = st.session_state.get("username")
-is_admin = (username == 'admin')
-
-col_logo, col_space, col_user = st.columns([2, 1, 2])
-with col_logo:
-    try:
-        if os.path.exists("logo.png"):
-            st.image("logo.png", width=180)
-        else:
-            st.markdown("<h3 style='color: #3498db; margin:0;'>GENVEON</h3>", unsafe_allow_html=True)
-    except:
-        pass
-
-with col_user:
-    st.markdown(f"<div style='text-align: right; padding-top:10px;'>Hoş geldin, <b>{name}</b></div>", unsafe_allow_html=True)
-    authenticator.logout('Çıkış', 'main')
-
-st.divider()
-
-# --- GEMINI YZ YAPILANDIRMASI ---
-try:
-    genai.configure(api_key=st.secrets["gemini"]["api_key"])
-except:
-    st.error("Gemini API bağlantı hatası!")
-
-# --- YARDIMCI FONKSİYONLAR ---
-def compress_and_encode_image(image):
-    img = image.copy()
-    img.thumbnail((800, 800))
-    buffered = io.BytesIO()
-    img.save(buffered, format="JPEG", quality=70)
-    return base64.b64encode(buffered.getvalue()).decode("utf-8")
-
-def get_donem(tarih_str):
+# Eski tarihler için geriye dönük hesaplayıcı (Sadece yedek olarak)
+def calculate_period_from_date(tarih_str):
     try:
         t_str = str(tarih_str).strip().replace('/', '.').replace('-', '.')
         parts = t_str.split('.')
@@ -246,10 +198,82 @@ def get_donem(tarih_str):
                     bas_ay = month - 1 if month > 1 else 12
                     bas_yil = year if month > 1 else year - 1
                     bit_ay, bit_yil = month, year
-                return f"15 {aylar[bas_ay]} {bas_yil} - 15 {aylar[bit_ay]} {bit_yil}"
+                donem_str = f"15 {aylar[bas_ay]} {bas_yil} - 15 {aylar[bit_ay]} {bit_yil}"
+                if donem_str in TUM_DONEMLER:
+                    return donem_str
     except:
         pass
-    return "Bilinmeyen Dönem"
+    return get_current_period_string()
+
+# --- KİMLİK DOĞRULAMA (LOGIN) SİSTEMİ ---
+try:
+    credentials_dict = {"usernames": {}}
+    users = dict(st.secrets["credentials"]["usernames"])
+    for u_name, u_info in users.items():
+        plain_pass = str(u_info["password"]).strip()
+        credentials_dict["usernames"][u_name] = {
+            "email": u_info.get("email", ""),
+            "name": u_info.get("name", u_name),
+            "password": plain_pass
+        }
+    stauth.Hasher.hash_passwords(credentials_dict)
+    authenticator = stauth.Authenticate(
+        credentials_dict, st.secrets["cookie"]["name"], st.secrets["cookie"]["key"], st.secrets["cookie"]["expiry_days"]
+    )
+except Exception as e:
+    send_email_to_admin("KRİTİK HATA: Login Sistemi Çöktü", f"Hata: {str(e)}")
+    st.error("Giriş sistemi yapılandırılamadı.")
+    st.stop()
+
+auth_status = st.session_state.get("authentication_status")
+
+# --- GİRİŞ EKRANI TASARIMI ---
+if auth_status is not True:
+    st.markdown("""
+        <style>
+            [data-testid="stFormSubmitButton"] button p { font-size: 0px !important; }
+            [data-testid="stFormSubmitButton"] button p::before { content: "Sisteme Giriş Yap"; font-size: 16px !important; visibility: visible; }
+        </style>
+    """, unsafe_allow_html=True)
+    st.markdown("<div style='display:flex; justify-content:center; margin-bottom: 20px;'>", unsafe_allow_html=True)
+    try:
+        if os.path.exists("logo.png"): st.image("logo.png", width=250)
+        else: st.markdown("<h1 style='color: #3498db; text-align: center;'>GENVEON</h1>", unsafe_allow_html=True)
+    except:
+        st.markdown("<h1 style='color: #3498db; text-align: center;'>GENVEON</h1>", unsafe_allow_html=True)
+    st.markdown("</div>", unsafe_allow_html=True)
+    st.markdown("<div class='kurumsal-baslik'>Masraf Takip Uygulaması</div>", unsafe_allow_html=True)
+    col1, col2, col3 = st.columns([1, 2, 1])
+    with col2: authenticator.login()
+    st.stop()
+
+# --- GİRİŞ BAŞARILI SONRASI ---
+name = st.session_state.get("name")
+username = st.session_state.get("username")
+is_admin = (username == 'admin')
+
+col_logo, col_space, col_user = st.columns([2, 1, 2])
+with col_logo:
+    try:
+        if os.path.exists("logo.png"): st.image("logo.png", width=180)
+        else: st.markdown("<h3 style='color: #3498db; margin:0;'>GENVEON</h3>", unsafe_allow_html=True)
+    except: pass
+with col_user:
+    st.markdown(f"<div style='text-align: right; padding-top:10px;'>Hoş geldin, <b>{name}</b></div>", unsafe_allow_html=True)
+    authenticator.logout('Çıkış', 'main')
+st.divider()
+
+# --- GEMINI YZ YAPILANDIRMASI ---
+try: genai.configure(api_key=st.secrets["gemini"]["api_key"])
+except: st.error("Gemini API bağlantı hatası!")
+
+# --- YARDIMCI FONKSİYONLAR ---
+def compress_and_encode_image(image):
+    img = image.copy()
+    img.thumbnail((800, 800))
+    buffered = io.BytesIO()
+    img.save(buffered, format="JPEG", quality=70)
+    return base64.b64encode(buffered.getvalue()).decode("utf-8")
 
 def parse_amount(val):
     if isinstance(val, (int, float)): return float(val)
@@ -257,35 +281,28 @@ def parse_amount(val):
     if not val: return 0.0
     separators = re.findall(r'[^\d]', val)
     if not separators: return float(val)
-    if separators[-1] == ',':
-        val = val.replace('.', '').replace(',', '.')
-    elif separators[-1] == '.':
-        val = val.replace(',', '')
+    if separators[-1] == ',': val = val.replace('.', '').replace(',', '.')
+    elif separators[-1] == '.': val = val.replace(',', '')
     else:
-        if val.count(',') == 1 and val.count('.') == 0:
-            val = val.replace(',', '.')
-        elif val.count('.') > 1 and val.count(',') == 0:
-            val = val.replace('.', '')
+        if val.count(',') == 1 and val.count('.') == 0: val = val.replace(',', '.')
+        elif val.count('.') > 1 and val.count(',') == 0: val = val.replace('.', '')
         elif val.count('.') == 1 and val.count(',') == 0:
             if len(val.split('.')[1]) == 3: val = val.replace('.', '')
     val = re.sub(r'[^\d\.]', '', val)
     try: return float(val)
     except: return 0.0
 
-def normalize_str(s):
-    return re.sub(r'[\s\W_]+', '', str(s)).lower()
+def normalize_str(s): return re.sub(r'[\s\W_]+', '', str(s)).lower()
 
 def safe_text(text):
     text = str(text)
-    donusum = {"ı": "i", "İ": "I", "ş": "s", "Ş": "S", "ğ": "g", "Ğ": "G", "ü": "u", "Ü": "U", "ö": "o", "Ö": "O", "ç": "c", "Ç": "C"}
-    for tr, en in donusum.items():
-        text = text.replace(tr, en)
+    donusum = {"ı":"i", "İ":"I", "ş":"s", "Ş":"S", "ğ":"g", "Ğ":"G", "ü":"u", "Ü":"U", "ö":"o", "Ö":"O", "ç":"c", "Ç":"C"}
+    for tr, en in donusum.items(): text = text.replace(tr, en)
     return text
 
 def get_expenses(fetch_all=False, user_id=None):
     expenses_ref = db.collection('masraflar')
     query = expenses_ref.stream() if fetch_all else expenses_ref.where('username', '==', user_id).stream()
-    
     data = []
     mevcut_kategoriler = list(kategoriler.keys())
     
@@ -293,13 +310,13 @@ def get_expenses(fetch_all=False, user_id=None):
         item = doc.to_dict()
         item['id'] = doc.id
         
-        ham_kat = str(item.get('kategori', item.get('Kategori', 'Bilinmeyen'))).strip()
+        ham_kat = str(item.get('kategori', 'Bilinmeyen')).strip()
         eslesen_kat = ham_kat
         for mk in mevcut_kategoriler:
             if normalize_str(mk) == normalize_str(ham_kat): eslesen_kat = mk; break
         item['kategori'] = eslesen_kat
         
-        ham_ilac = str(item.get('marka', item.get('İlaç', 'Bilinmeyen'))).strip()
+        ham_ilac = str(item.get('marka', 'Bilinmeyen')).strip()
         eslesen_ilac = ham_ilac
         for mi in markalar:
             if normalize_str(mi) == normalize_str(ham_ilac): eslesen_ilac = mi; break
@@ -309,13 +326,18 @@ def get_expenses(fetch_all=False, user_id=None):
         item['kdv_orani'] = float(item.get('kdv_orani', 0.0))
         item['kdv_tutari'] = float(item.get('kdv_tutari', 0.0))
         item['harcama_turu'] = safe_text(item.get('harcama_turu', ''))
-        
         item['isletme'] = safe_text(item.get('isletme', 'Bilinmeyen'))
         item['fis_no'] = safe_text(item.get('fis_no', ''))
         item['tarih'] = str(item.get('tarih', ''))
         item['kullanici_adi'] = str(item.get('kullanici_adi', 'Bilinmeyen'))
-        item['Dönem'] = get_donem(item['tarih'])
         
+        # KESİN ÇÖZÜM: Veritabanında kayıtlı Dönem varsa onu kullan, yoksa tarihten hesapla
+        kayitli_donem = item.get('Dönem', '')
+        if kayitli_donem in TUM_DONEMLER:
+            item['Dönem'] = kayitli_donem
+        else:
+            item['Dönem'] = calculate_period_from_date(item['tarih'])
+            
         data.append(item)
     return data
 
@@ -345,10 +367,10 @@ def create_pdf_report(df, donem, isim):
         pdf.ln()
     return bytes(pdf.output(dest='S').encode('latin-1', 'ignore'))
 
-# --- FİŞ DÜZENLEME ARAYÜZÜ (EKSİKSİZ) ---
+# --- FİŞ DÜZENLEME ARAYÜZÜ (DÖNEM DEĞİŞTİRME EKLENDİ) ---
 def render_edit_interface(df, prefix_key):
     st.markdown("#### ✏️ Fiş Düzenle veya Sil")
-    df['secim_metni'] = df['isletme'] + " - " + df['toplam_tutar'].astype(str) + " TL (" + df['tarih'] + ")"
+    df['secim_metni'] = df['isletme'] + " - " + df['toplam_tutar'].astype(str) + " TL (" + df['tarih'] + ") [" + df['Dönem'] + "]"
     secim_listesi = ["Bir fiş seçin..."] + df['secim_metni'].tolist()
     
     secilen_metin = st.selectbox("İşlem yapılacak fişi seçin:", secim_listesi, key=f"edit_select_{prefix_key}")
@@ -360,6 +382,11 @@ def render_edit_interface(df, prefix_key):
         with st.form(key=f"edit_form_{prefix_key}"):
             c1, c2 = st.columns(2)
             
+            # Fişin dönemini manuel değiştirebilme
+            mevcut_donem = secilen_kayit.get('Dönem', get_current_period_string())
+            idx_donem = TUM_DONEMLER.index(mevcut_donem) if mevcut_donem in TUM_DONEMLER else 0
+            y_donem = c1.selectbox("Fişin Ait Olduğu Dönem", TUM_DONEMLER, index=idx_donem)
+            
             y_isletme = c1.text_input("İşletme Adı", secilen_kayit['isletme'])
             y_fis = c1.text_input("Fiş No", secilen_kayit.get('fis_no', ''))
             y_tarih = c1.text_input("Tarih (GG.AA.YYYY)", secilen_kayit['tarih'])
@@ -367,7 +394,7 @@ def render_edit_interface(df, prefix_key):
             
             mevcut_kats = list(kategoriler.keys())
             idx_k = mevcut_kats.index(secilen_kayit['kategori']) if secilen_kayit['kategori'] in mevcut_kats else 0
-            y_kategori = c1.selectbox("Kategori", mevcut_kats, index=idx_k)
+            y_kategori = c2.selectbox("Kategori", mevcut_kats, index=idx_k)
             
             y_tutar = c2.number_input("Tutar (TL)", float(secilen_kayit['toplam_tutar']), step=10.0)
             y_kdv_oran = c2.number_input("KDV Oranı (%)", float(secilen_kayit.get('kdv_orani', 0.0)), step=1.0)
@@ -377,14 +404,13 @@ def render_edit_interface(df, prefix_key):
             y_ilac = c2.selectbox("İlaç", markalar, index=idx_m)
             
             st.write("") 
-            
             col_b1, col_b2 = st.columns(2)
             btn_guncelle = col_b1.form_submit_button("💾 Güncelle", use_container_width=True, type="primary")
             btn_sil = col_b2.form_submit_button("🗑️ Sil", use_container_width=True)
             
             if btn_guncelle:
                 db.collection('masraflar').document(doc_id).update({
-                    "isletme": y_isletme, "tarih": y_tarih, "kategori": y_kategori,
+                    "Dönem": y_donem, "isletme": y_isletme, "tarih": y_tarih, "kategori": y_kategori,
                     "marka": y_ilac, "toplam_tutar": float(y_tutar), "fis_no": y_fis,
                     "kdv_orani": float(y_kdv_oran), "kdv_tutari": float(y_kdv_tutar), "harcama_turu": y_harcama_turu
                 })
@@ -401,7 +427,6 @@ def render_edit_interface(df, prefix_key):
 # --- DASHBOARD ÇİZİM FONKSİYONU ---
 def draw_dashboard(df_harcamalar, baslik_metni):
     st.markdown(f"<h2 style='text-align: center;'>{baslik_metni}</h2>", unsafe_allow_html=True)
-    
     if df_harcamalar.empty:
         st.info("Sistemde henüz harcama verisi bulunmuyor.")
         return
@@ -418,11 +443,9 @@ def draw_dashboard(df_harcamalar, baslik_metni):
     unmapped_df = df_secili[~df_secili['kategori'].isin(mevcut_kat_listesi)]
     if not unmapped_df.empty:
         st.error("⚠️ DİKKAT: Aşağıdaki harcamaların kategorisi sistemdeki bütçelerle uyuşmuyor. Lütfen 'Fiş Düzenle' kısmından güncelleyin.")
-        st.dataframe(unmapped_df[['tarih', 'kategori', 'İlaç', 'isletme', 'toplam_tutar']], use_container_width=True)
 
     st.markdown("### ⏱️ Hızlı Dönem Özeti")
     rapor_kolonlari = st.columns(len(kategoriler))
-    
     for idx, (kat_adi, ayar) in enumerate(kategoriler.items()):
         with rapor_kolonlari[idx]:
             with st.container(border=True): 
@@ -433,17 +456,14 @@ def draw_dashboard(df_harcamalar, baslik_metni):
                 st.metric(label="Kalan Bütçe", value=f"{kalan:,.2f} TL", delta=f"-{harcanan:,.2f} TL", delta_color="inverse")
     
     st.divider()
-    
     safe_isim = re.sub(r'[^A-Za-z0-9_]', '', baslik_metni.replace("👤 ", "").replace("👑 ", "").replace(' ', '_'))
     safe_donem = re.sub(r'[^A-Za-z0-9_]', '', secilen_donem.replace(' ', '_'))
-    
     c1, c2, c3 = st.columns([1,2,1])
     with c2:
         st.download_button("📄 Dönem Raporunu İndir (PDF)", create_pdf_report(df_secili, secilen_donem, safe_isim), file_name=f"Rapor_{safe_isim}_{safe_donem}.pdf", mime="application/pdf", use_container_width=True)
     st.divider()
 
     harcama_ozeti = df_secili.groupby(['kategori', 'İlaç'])['toplam_tutar'].sum().reset_index()
-    
     for kat_adi, ayar in kategoriler.items():
         with st.expander(f"📊 {kat_adi} Kategorisi Detayları (Ayrılan: {ayar['limit']:,.0f} TL)", expanded=True):
             dapgeon_limit = ayar['limit'] * (ayar['dapgeon_oran'] / 100)
@@ -475,6 +495,7 @@ else:
 
 # --- 1. SEKME: KİŞİSEL PANEL ---
 with tab_kisisel:
+    # Verileri bir kez çekiyoruz, hem dashboard hem de Yeni Fiş ekranı kullanacak
     kisisel_masraflar = get_expenses(fetch_all=False, user_id=username)
     df_kisisel = pd.DataFrame(kisisel_masraflar) if kisisel_masraflar else pd.DataFrame()
     draw_dashboard(df_kisisel, f"👤 Kendi Bütçem")
@@ -485,9 +506,52 @@ with tab_kisisel:
             st.divider()
             render_edit_interface(df_kisisel, prefix_key="kisisel")
 
-# --- 2. SEKME: YENİ FİŞ YÜKLEME (TÜM ALANLAR EKLENDİ VE LİMİT DÜZELTİLDİ) ---
+# --- 2. SEKME: YENİ FİŞ YÜKLEME (DÖNEM SEÇİCİ VE ANLIK BÜTÇE GÖRÜNÜMÜ) ---
 with tab_yeni:
-    st.markdown("<h3 style='text-align:center;'>🤖 Yapay Zeka Destekli Fiş Okuyucu</h3>", unsafe_allow_html=True)
+    st.markdown("<h3 style='text-align:center;'>➕ Yeni Fiş Ekleme ve Yapay Zeka Okuyucu</h3>", unsafe_allow_html=True)
+    
+    # 1. Adım: Hangi Döneme Fiş Ekleniyor?
+    st.markdown("#### 1. Fişin Ait Olduğu Dönemi Seçin")
+    varsayilan_donem = get_current_period_string()
+    idx_varsayilan = TUM_DONEMLER.index(varsayilan_donem) if varsayilan_donem in TUM_DONEMLER else 0
+    secilen_hedef_donem = st.selectbox("Fişin Kaydedileceği Dönem:", TUM_DONEMLER, index=idx_varsayilan)
+    
+    # 2. Adım: O Dönemdeki Mevcut Bütçeleri Göster
+    st.markdown(f"#### 💰 Seçili Dönem İçin Güncel Bütçeniz ({secilen_hedef_donem})")
+    
+    df_k = pd.DataFrame(kisisel_masraflar) if kisisel_masraflar else pd.DataFrame()
+    if not df_k.empty and 'Dönem' in df_k.columns:
+        df_donem = df_k[df_k['Dönem'] == secilen_hedef_donem]
+    else:
+        df_donem = pd.DataFrame()
+
+    b_cols = st.columns(len(kategoriler))
+    for idx, (kat_adi, ayar) in enumerate(kategoriler.items()):
+        with b_cols[idx]:
+            kat_limit = ayar['limit']
+            kat_harcanan = df_donem[df_donem['kategori'] == kat_adi]['toplam_tutar'].sum() if not df_donem.empty else 0.0
+            dap_harc = df_donem[(df_donem['kategori'] == kat_adi) & (df_donem['İlaç'] == 'Dapgeon')]['toplam_tutar'].sum() if not df_donem.empty else 0.0
+            lin_harc = df_donem[(df_donem['kategori'] == kat_adi) & (df_donem['İlaç'] == 'Liniga')]['toplam_tutar'].sum() if not df_donem.empty else 0.0
+            
+            dap_limit = kat_limit * (ayar['dapgeon_oran']/100)
+            lin_limit = kat_limit * (ayar['liniga_oran']/100)
+            
+            genel_kalan = kat_limit - kat_harcanan
+            renk = "green" if genel_kalan >= 0 else "red"
+            
+            st.markdown(f"""
+            <div class="budget-card">
+                <div class="budget-title">📂 {kat_adi}</div>
+                <div class="budget-row"><span>Genel Kalan:</span><strong style="color:{renk}">{genel_kalan:,.2f} TL</strong></div>
+                <div class="budget-row" style="color:#7f8c8d;"><span>↳ Dapgeon:</span><span>{(dap_limit - dap_harc):,.2f} TL</span></div>
+                <div class="budget-row" style="color:#7f8c8d;"><span>↳ Liniga:</span><span>{(lin_limit - lin_harc):,.2f} TL</span></div>
+            </div>
+            """, unsafe_allow_html=True)
+            
+    st.divider()
+
+    # 3. Adım: Fiş Yükleme ve AI
+    st.markdown("#### 2. Fiş Yükle ve Bilgileri Gir")
     uploaded_file = st.file_uploader("Fotoğraf Yükle", type=['png', 'jpg', 'jpeg'])
 
     if uploaded_file is not None:
@@ -527,7 +591,6 @@ with tab_yeni:
         with st.form("masraf_formu"):
             c1, c2 = st.columns(2)
             
-            # --- EKSİKSİZ FORM ALANLARI ---
             isletme = c1.text_input("İşletme Adı", safe_text(ai_data.get("isletme", "")))
             fis_no = c1.text_input("Fiş No", safe_text(ai_data.get("fis_no", "")))
             tarih = c1.text_input("Tarih (GG.AA.YYYY)", safe_text(ai_data.get("tarih", "")))
@@ -538,30 +601,28 @@ with tab_yeni:
             toplam_tutar = c2.number_input("Tutar (TL)", float(ai_data.get("toplam_tutar", 0.0)), step=10.0)
             kdv_orani = c2.number_input("KDV Oranı (%)", float(ai_data.get("kdv_orani", 0.0)), step=1.0)
             kdv_tutari = c2.number_input("KDV Tutarı (TL)", float(ai_data.get("kdv_tutari", 0.0)), step=1.0)
-            
             sec_mar = c2.selectbox("İlaç", markalar, index=markalar.index(ai_mar) if ai_mar in markalar else 0)
 
-            # Form Kaydetme Butonu (Klasik Görünüm)
             if st.form_submit_button("💾 Sisteme Kaydet", use_container_width=True) and toplam_tutar > 0:
-                aktif_donem = get_donem(tarih)
-                df_k = pd.DataFrame(kisisel_masraflar) if kisisel_masraflar else pd.DataFrame()
                 
-                # --- YENİ ESNEME MANTIĞI: GENEL KATEGORİ LİMİTİ (+200 TL) ---
-                kategori_harcanan = df_k[(df_k['Dönem'] == aktif_donem) & (df_k['kategori'] == sec_kat)]['toplam_tutar'].sum() if not df_k.empty else 0
+                kategori_harcanan = df_donem[df_donem['kategori'] == sec_kat]['toplam_tutar'].sum() if not df_donem.empty else 0
                 kategori_limit = kategoriler[sec_kat]['limit']
                 
+                # --- SADECE GENEL LİMİT + 200 TL KONTROLÜ YAPILIYOR ---
                 if (kategori_harcanan + toplam_tutar) > (kategori_limit + 200):
-                    st.error(f"❌ KATEGORİ LİMİT AŞIMI! {sec_kat} kategorisi için kalan toplam bütçeniz {(kategori_limit - kategori_harcanan):,.2f} TL. Genel kategoride en fazla 200 TL esneme payı (aşım) yapabilirsiniz.")
+                    st.error(f"❌ KATEGORİ LİMİT AŞIMI! {sec_kat} kategorisi için bu dönemki (Genel) kalan bütçeniz {(kategori_limit - kategori_harcanan):,.2f} TL. En fazla 200 TL esneme payı yapabilirsiniz.")
                 else:
                     db.collection('masraflar').add({
                         "username": username, "kullanici_adi": name, "tarih": tarih,
+                        "Dönem": secilen_hedef_donem, # FİŞ KESİNLİKLE SEÇİLEN DÖNEME KAYDEDİLİYOR
                         "isletme": isletme, "kategori": sec_kat, "marka": sec_mar, 
                         "toplam_tutar": float(toplam_tutar), "kdv_orani": float(kdv_orani),
                         "kdv_tutari": float(kdv_tutari), "fis_no": fis_no, "harcama_turu": harcama_turu,
                         "gorsel_b64": compress_and_encode_image(image),
                         "timestamp": firestore.SERVER_TIMESTAMP
                     })
-                    st.success("✅ Kaydedildi!")
+                    st.success(f"✅ Fiş Başarıyla '{secilen_hedef_donem}' dönemine kaydedildi!")
+                    st.session_state['last_uploaded'] = None
                     st.rerun()
 
 # --- 3. SEKME: DESTEK & SORUN BİLDİR ---
@@ -578,18 +639,9 @@ with tab_destek:
                         model = genai.GenerativeModel('gemini-2.5-flash')
                         prompt = f"Bir kullanıcı şu sorunu yaşadı: '{sorun_metni}'. Uygulama yetkilisi için kısa bir teşhis ve çözüm önerisi yaz."
                         ai_analiz = model.generate_content(prompt).text
-                        
-                        bildirim = {
-                            "kullanici": name,
-                            "sorun": sorun_metni,
-                            "ai_analizi": ai_analiz,
-                            "zaman": datetime.now().strftime("%d.%m.%Y %H:%M")
-                        }
+                        bildirim = {"kullanici": name, "sorun": sorun_metni, "ai_analizi": ai_analiz, "zaman": datetime.now().strftime("%d.%m.%Y %H:%M")}
                         db.collection('sorun_bildirimleri').add(bildirim)
-                        
-                        mail_icerik = f"Kullanıcı: {name}\nSorun: {sorun_metni}\n\nAI Analizi:\n{ai_analiz}"
-                        send_email_to_admin("Yeni Sorun Bildirimi", mail_icerik)
-                        
+                        send_email_to_admin("Yeni Sorun Bildirimi", f"Kullanıcı: {name}\nSorun: {sorun_metni}\n\nAI Analizi:\n{ai_analiz}")
                         st.success("Sorununuz analiz edildi ve yöneticiye güvenli bir şekilde iletildi.")
                     except:
                         db.collection('sorun_bildirimleri').add({"kullanici": name, "sorun": sorun_metni})
@@ -600,7 +652,6 @@ if is_admin:
     with tab_ekip:
         tm = get_expenses(True)
         draw_dashboard(pd.DataFrame(tm), "👑 Tüm Ekip Harcamaları")
-        
         df_tum = pd.DataFrame(tm)
         if not df_tum.empty:
             with st.expander("📋 Tüm Ekibin Geçmiş Harcamaları & Fiş Düzenleme", expanded=False):
@@ -628,5 +679,3 @@ if is_admin:
             with st.expander(f"{b.get('zaman', '')} - {b.get('kullanici', '')}"):
                 st.write(f"**Kullanıcının Sorunu:** {b.get('sorun', '')}")
                 st.write(f"**Yapay Zeka Teşhisi:** {b.get('ai_analizi', 'Analiz yapılamadı.')}")
-
-
