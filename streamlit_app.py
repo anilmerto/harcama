@@ -103,8 +103,11 @@ if 'sistem_ayarlari' not in st.session_state:
     st.session_state['sistem_ayarlari'] = get_system_settings()
 
 ayarlar = st.session_state['sistem_ayarlari']
-genel_kategoriler = ayarlar['kategoriler']
-markalar = ayarlar['markalar']
+genel_kategoriler = ayarlar.get('kategoriler', {})
+if not genel_kategoriler:  # Güvenlik önlemi
+    genel_kategoriler = {"Temsil": {"limit": 7000.0, "dapgeon_oran": 60, "liniga_oran": 40}}
+    
+markalar = ayarlar.get('markalar', ["Dapgeon", "Liniga"])
 butceler = ayarlar.get('butceler', {})
 
 def get_budget_for_period(donem_str):
@@ -165,7 +168,8 @@ def calculate_period_from_date(tarih_str):
     return get_current_period_string()
 
 # --- KİMLİK DOĞRULAMA (SAYFA YENİLEME HATASI ÇÖZÜLDÜ) ---
-# DİKKAT: @st.cache_data kaldırıldı, böylece sayfayı yenilediğinizde sistemden atılmayacaksınız!
+# Cache'i geri ekledik ki sayfayı yenileyince şifreler uçmasın ve sistemden atılmayın!
+@st.cache_data(show_spinner=False)
 def get_hashed_credentials():
     credentials_dict = {"usernames": {}}
     users = dict(st.secrets["credentials"]["usernames"])
@@ -212,7 +216,6 @@ if not auth_status:
     
     if st.session_state.get("authentication_status") is False:
         st.error("Kullanıcı adı veya şifre hatalı!")
-    
     st.stop()
 
 # --- GİRİŞ BAŞARILI SONRASI ---
@@ -278,118 +281,4 @@ def get_expenses(fetch_all=False, user_id=None):
         item = doc.to_dict()
         item['id'] = doc.id
         
-        ham_kat = str(item.get('kategori', 'Bilinmeyen')).strip()
-        eslesen_kat = ham_kat
-        for mk in mevcut_kategoriler:
-            if normalize_str(mk) == normalize_str(ham_kat): eslesen_kat = mk; break
-        item['kategori'] = eslesen_kat
-        
-        ham_ilac = str(item.get('marka', 'Bilinmeyen')).strip()
-        eslesen_ilac = ham_ilac
-        for mi in markalar:
-            if normalize_str(mi) == normalize_str(ham_ilac): eslesen_ilac = mi; break
-        item['İlaç'] = eslesen_ilac
-        
-        item['toplam_tutar'] = parse_amount(item.get('toplam_tutar', 0.0))
-        item['kdv_orani'] = float(item.get('kdv_orani', 0.0))
-        item['kdv_tutari'] = float(item.get('kdv_tutari', 0.0))
-        item['harcama_turu'] = safe_text(item.get('harcama_turu', ''))
-        item['isletme'] = safe_text(item.get('isletme', 'Bilinmeyen'))
-        item['fis_no'] = safe_text(item.get('fis_no', ''))
-        item['tarih'] = str(item.get('tarih', ''))
-        item['kullanici_adi'] = str(item.get('kullanici_adi', 'Bilinmeyen'))
-        
-        kayitli_donem = item.get('Dönem', '')
-        if kayitli_donem in TUM_DONEMLER:
-            item['Dönem'] = kayitli_donem
-        else:
-            item['Dönem'] = calculate_period_from_date(item['tarih'])
-            
-        data.append(item)
-    return data
-
-def create_pdf_report(df, donem, isim):
-    pdf = FPDF()
-    pdf.add_page()
-    pdf.set_font("Arial", 'B', 16)
-    pdf.cell(0, 10, safe_text(f"Harcama Raporu - {isim}"), ln=True, align='C')
-    pdf.set_font("Arial", '', 12)
-    pdf.cell(0, 10, safe_text(f"Donem: {donem}"), ln=True, align='C')
-    pdf.ln(10)
-    
-    if not df.empty and 'toplam_tutar' in df.columns:
-        toplam = df['toplam_tutar'].sum()
-    else:
-        toplam = 0.0
-        
-    pdf.cell(0, 10, safe_text(f"Toplam Harcama: {toplam:,.2f} TL"), ln=True)
-    pdf.ln(5)
-    pdf.set_font("Arial", 'B', 10)
-    col_widths = [25, 35, 35, 65, 30]
-    headers = ["Tarih", "Kategori", "Ilac", "Isletme", "Tutar(TL)"]
-    for w, h in zip(col_widths, headers): pdf.cell(w, 10, h, border=1, align='C')
-    pdf.ln()
-    pdf.set_font("Arial", '', 9)
-    if not df.empty:
-        for _, row in df.iterrows():
-            pdf.cell(col_widths[0], 10, safe_text(row.get('tarih', '')), border=1)
-            pdf.cell(col_widths[1], 10, safe_text(row.get('kategori', ''))[:18], border=1)
-            pdf.cell(col_widths[2], 10, safe_text(row.get('İlaç', ''))[:18], border=1)
-            pdf.cell(col_widths[3], 10, safe_text(row.get('isletme', ''))[:35], border=1)
-            pdf.cell(col_widths[4], 10, f"{row.get('toplam_tutar', 0.0):,.2f}", border=1, align='R')
-            pdf.ln()
-    return bytes(pdf.output(dest='S').encode('latin-1', 'ignore'))
-
-def render_edit_interface(df, prefix_key):
-    st.markdown("#### ✏️ Fiş Düzenle veya Sil")
-    if df.empty or 'isletme' not in df.columns:
-        st.info("Düzenlenecek fiş bulunmuyor.")
-        return
-        
-    df['secim_metni'] = df['isletme'] + " - " + df['toplam_tutar'].astype(str) + " TL (" + df['tarih'] + ") [" + df['Dönem'] + "]"
-    secim_listesi = ["Bir fiş seçin..."] + df['secim_metni'].tolist()
-    
-    secilen_metin = st.selectbox("İşlem yapılacak fişi seçin:", secim_listesi, key=f"edit_select_{prefix_key}")
-    
-    if secilen_metin != "Bir fiş seçin...":
-        secilen_kayit = df[df['secim_metni'] == secilen_metin].iloc[0]
-        doc_id = secilen_kayit['id']
-        
-        with st.form(key=f"edit_form_{prefix_key}"):
-            c1, c2 = st.columns(2)
-            
-            mevcut_donem = secilen_kayit.get('Dönem', get_current_period_string())
-            idx_donem = TUM_DONEMLER.index(mevcut_donem) if mevcut_donem in TUM_DONEMLER else 0
-            y_donem = c1.selectbox("Fişin Ait Olduğu Dönem", TUM_DONEMLER, index=idx_donem)
-            
-            y_isletme = c1.text_input("İşletme Adı", secilen_kayit.get('isletme', ''))
-            y_fis = c1.text_input("Fiş No", secilen_kayit.get('fis_no', ''))
-            y_tarih = c1.text_input("Tarih (GG.AA.YYYY)", secilen_kayit.get('tarih', ''))
-            y_harcama_turu = c1.text_input("Harcama Türü", secilen_kayit.get('harcama_turu', ''))
-            
-            mevcut_kats = list(genel_kategoriler.keys())
-            idx_k = mevcut_kats.index(secilen_kayit['kategori']) if secilen_kayit.get('kategori') in mevcut_kats else 0
-            y_kategori = c2.selectbox("Kategori", mevcut_kats, index=idx_k)
-            
-            y_tutar = c2.number_input("Tutar (TL)", float(secilen_kayit.get('toplam_tutar', 0.0)), step=10.0)
-            y_kdv_oran = c2.number_input("KDV Oranı (%)", float(secilen_kayit.get('kdv_orani', 0.0)), step=1.0)
-            y_kdv_tutar = c2.number_input("KDV Tutarı (TL)", float(secilen_kayit.get('kdv_tutari', 0.0)), step=1.0)
-            
-            idx_m = markalar.index(secilen_kayit['İlaç']) if secilen_kayit.get('İlaç') in markalar else 0
-            y_ilac = c2.selectbox("İlaç", markalar, index=idx_m)
-            
-            st.write("") 
-            col_b1, col_b2 = st.columns(2)
-            btn_guncelle = col_b1.form_submit_button("💾 Güncelle", use_container_width=True, type="primary")
-            btn_sil = col_b2.form_submit_button("🗑️ Sil", use_container_width=True)
-            
-            if btn_guncelle:
-                db.collection('masraflar').document(doc_id).update({
-                    "Dönem": y_donem, "isletme": y_isletme, "tarih": y_tarih, "kategori": y_kategori,
-                    "marka": y_ilac, "toplam_tutar": float(y_tutar), "fis_no": y_fis,
-                    "kdv_orani": float(y_kdv_oran), "kdv_tutari": float(y_kdv_tutar), "harcama_turu": y_harcama_turu
-                })
-                st.success("Fiş başarıyla güncellendi!")
-                st.rerun()
-            if btn_sil:
-                db.collection('masraflar').document(doc_id).delete()
+        ham_kat =
