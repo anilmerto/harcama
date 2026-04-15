@@ -23,68 +23,19 @@ st.set_page_config(page_title="Genveon Masraf Portalı", layout="wide", page_ico
 # --- GELİŞMİŞ MOBİL UYUM & GENEL TASARIM CSS ---
 st.markdown("""
     <style>
-        .block-container {
-            max-width: 1100px !important;
-            padding-top: 2rem !important;
-        }
-        .stTabs [data-baseweb="tab-list"] {
-            justify-content: center;
-            gap: 15px;
-            border-bottom: 2px solid #f0f2f6;
-        }
-        .stTabs [data-baseweb="tab"] {
-            font-size: 1.1rem;
-            padding: 12px 20px;
-            font-weight: 500;
-        }
+        .block-container { max-width: 1100px !important; padding-top: 2rem !important; }
+        .stTabs [data-baseweb="tab-list"] { justify-content: center; gap: 15px; border-bottom: 2px solid #f0f2f6; }
+        .stTabs [data-baseweb="tab"] { font-size: 1.1rem; padding: 12px 20px; font-weight: 500; }
         @media (max-width: 768px) {
-            [data-testid="stImage"] {
-                display: flex;
-                justify-content: center;
-                align-items: center;
-            }
-            [data-testid="stImage"] img {
-                max-width: 160px !important; 
-                height: auto;
-            }
-            .kurumsal-baslik {
-                font-size: 18px !important;
-                margin-bottom: 20px !important;
-                text-align: center;
-            }
+            [data-testid="stImage"] { display: flex; justify-content: center; align-items: center; }
+            [data-testid="stImage"] img { max-width: 160px !important; height: auto; }
+            .kurumsal-baslik { font-size: 18px !important; margin-bottom: 20px !important; text-align: center; }
             h1, h2, h3 { text-align: center; }
         }
-        .kurumsal-baslik {
-            font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
-            color: #2c3e50;
-            font-weight: 300;
-            text-align: center;
-            font-size: 24px;
-            margin-top: -10px;
-            margin-bottom: 30px;
-            letter-spacing: 1px;
-        }
-        .budget-card {
-            background-color: #f8f9fa;
-            border: 1px solid #e0e6ed;
-            border-radius: 8px;
-            padding: 15px;
-            margin-bottom: 10px;
-        }
-        .budget-title {
-            color: #2c3e50;
-            font-weight: bold;
-            font-size: 1.1rem;
-            margin-bottom: 10px;
-            border-bottom: 1px solid #dcdde1;
-            padding-bottom: 5px;
-        }
-        .budget-row {
-            display: flex;
-            justify-content: space-between;
-            margin-bottom: 4px;
-            font-size: 0.95rem;
-        }
+        .kurumsal-baslik { font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif; color: #2c3e50; font-weight: 300; text-align: center; font-size: 24px; margin-top: -10px; margin-bottom: 30px; letter-spacing: 1px; }
+        .budget-card { background-color: #f8f9fa; border: 1px solid #e0e6ed; border-radius: 8px; padding: 15px; margin-bottom: 10px; }
+        .budget-title { color: #2c3e50; font-weight: bold; font-size: 1.1rem; margin-bottom: 10px; border-bottom: 1px solid #dcdde1; padding-bottom: 5px; }
+        .budget-row { display: flex; justify-content: space-between; margin-bottom: 4px; font-size: 0.95rem; }
     </style>
 """, unsafe_allow_html=True)
 
@@ -128,7 +79,10 @@ def get_system_settings():
     doc_ref = db.collection('ayarlar').document('sistem')
     doc = doc_ref.get()
     if doc.exists:
-        return doc.to_dict()
+        data = doc.to_dict()
+        if 'butceler' not in data:
+            data['butceler'] = {}
+        return data
     else:
         default_settings = {
             "kategoriler": {
@@ -136,7 +90,8 @@ def get_system_settings():
                 "Audiovisual": {"limit": 7000.0, "dapgeon_oran": 60, "liniga_oran": 40},
                 "Bölgesel": {"limit": 3000.0, "dapgeon_oran": 60, "liniga_oran": 40}
             },
-            "markalar": ["Dapgeon", "Liniga"]
+            "markalar": ["Dapgeon", "Liniga"],
+            "butceler": {}
         }
         doc_ref.set(default_settings)
         return default_settings
@@ -148,8 +103,15 @@ if 'sistem_ayarlari' not in st.session_state:
     st.session_state['sistem_ayarlari'] = get_system_settings()
 
 ayarlar = st.session_state['sistem_ayarlari']
-kategoriler = ayarlar['kategoriler']
+genel_kategoriler = ayarlar['kategoriler']
 markalar = ayarlar['markalar']
+butceler = ayarlar.get('butceler', {})
+
+# Döneme özel bütçe getiren fonksiyon
+def get_budget_for_period(donem_str):
+    if donem_str in butceler and butceler[donem_str]:
+        return butceler[donem_str]
+    return genel_kategoriler
 
 # --- KESİN DÖNEM LİSTESİ OLUŞTURUCU (2024-2027) ---
 @st.cache_data
@@ -203,26 +165,32 @@ def calculate_period_from_date(tarih_str):
         pass
     return get_current_period_string()
 
-# --- KİMLİK DOĞRULAMA (LOGIN) SİSTEMİ ---
-try:
+# --- KİMLİK DOĞRULAMA (LOGIN) SİSTEMİ (SAYFA YENİLEME HATASI ÇÖZÜLDÜ) ---
+@st.cache_data(show_spinner=False)
+def get_hashed_credentials():
     credentials_dict = {"usernames": {}}
     users = dict(st.secrets["credentials"]["usernames"])
     for u_name, u_info in users.items():
-        plain_pass = str(u_info["password"]).strip()
         credentials_dict["usernames"][u_name] = {
             "email": u_info.get("email", ""),
             "name": u_info.get("name", u_name),
-            "password": plain_pass
+            "password": str(u_info["password"]).strip()
         }
     stauth.Hasher.hash_passwords(credentials_dict)
+    return credentials_dict
+
+try:
+    credentials_dict = get_hashed_credentials()
     authenticator = stauth.Authenticate(
-        credentials_dict, st.secrets["cookie"]["name"], st.secrets["cookie"]["key"], st.secrets["cookie"]["expiry_days"]
+        credentials_dict, 
+        st.secrets["cookie"]["name"], 
+        st.secrets["cookie"]["key"], 
+        st.secrets["cookie"]["expiry_days"]
     )
 except Exception as e:
     st.error("Giriş sistemi yapılandırılamadı. Yöneticinize başvurun.")
     st.stop()
 
-# Doğrudan authenticator durumu kontrol edilir
 auth_status = st.session_state.get("authentication_status")
 
 # GİRİŞ EKRANI
@@ -308,7 +276,7 @@ def get_expenses(fetch_all=False, user_id=None):
     expenses_ref = db.collection('masraflar')
     query = expenses_ref.stream() if fetch_all else expenses_ref.where('username', '==', user_id).stream()
     data = []
-    mevcut_kategoriler = list(kategoriler.keys())
+    mevcut_kategoriler = list(genel_kategoriler.keys())
     
     for doc in query:
         item = doc.to_dict()
@@ -393,7 +361,7 @@ def render_edit_interface(df, prefix_key):
             y_tarih = c1.text_input("Tarih (GG.AA.YYYY)", secilen_kayit['tarih'])
             y_harcama_turu = c1.text_input("Harcama Türü", secilen_kayit.get('harcama_turu', ''))
             
-            mevcut_kats = list(kategoriler.keys())
+            mevcut_kats = list(genel_kategoriler.keys())
             idx_k = mevcut_kats.index(secilen_kayit['kategori']) if secilen_kayit['kategori'] in mevcut_kats else 0
             y_kategori = c2.selectbox("Kategori", mevcut_kats, index=idx_k)
             
@@ -428,7 +396,6 @@ def render_edit_interface(df, prefix_key):
 def draw_dashboard(df_harcamalar, baslik_metni):
     st.markdown(f"<h2 style='text-align: center;'>{baslik_metni}</h2>", unsafe_allow_html=True)
     
-    # Her zaman güncel dönemi listeye dahil et ki boş ayda da limits görünsün
     guncel_donem_str = get_current_period_string()
     mevcut_donemler = df_harcamalar['Dönem'].unique().tolist() if not df_harcamalar.empty else []
     if guncel_donem_str not in mevcut_donemler:
@@ -440,15 +407,18 @@ def draw_dashboard(df_harcamalar, baslik_metni):
     secilen_donem = st.selectbox(f"📅 İncelenecek Dönemi Seçin", donemler, index=idx_guncel, key=f"donem_secici_{baslik_metni}")
     df_secili = df_harcamalar[df_harcamalar['Dönem'] == secilen_donem].copy() if not df_harcamalar.empty else pd.DataFrame()
     
-    mevcut_kat_listesi = list(kategoriler.keys())
+    mevcut_kat_listesi = list(genel_kategoriler.keys())
     if not df_secili.empty:
         unmapped_df = df_secili[~df_secili['kategori'].isin(mevcut_kat_listesi)]
         if not unmapped_df.empty:
             st.error("⚠️ DİKKAT: Aşağıdaki harcamaların kategorisi sistemdeki bütçelerle uyuşmuyor. Lütfen 'Fiş Düzenle' kısmından güncelleyin.")
 
+    # Döneme özel bütçeyi çek
+    donem_butcesi = get_budget_for_period(secilen_donem)
+
     st.markdown(f"### ⏱️ {secilen_donem} Özeti")
-    rapor_kolonlari = st.columns(len(kategoriler))
-    for idx, (kat_adi, ayar) in enumerate(kategoriler.items()):
+    rapor_kolonlari = st.columns(len(donem_butcesi))
+    for idx, (kat_adi, ayar) in enumerate(donem_butcesi.items()):
         with rapor_kolonlari[idx]:
             with st.container(border=True): 
                 limit = ayar['limit']
@@ -468,7 +438,7 @@ def draw_dashboard(df_harcamalar, baslik_metni):
 
     if not df_secili.empty:
         harcama_ozeti = df_secili.groupby(['kategori', 'İlaç'])['toplam_tutar'].sum().reset_index()
-        for kat_adi, ayar in kategoriler.items():
+        for kat_adi, ayar in donem_butcesi.items():
             with st.expander(f"📊 {kat_adi} Kategorisi Detayları (Ayrılan: {ayar['limit']:,.0f} TL)", expanded=True):
                 dapgeon_limit = ayar['limit'] * (ayar['dapgeon_oran'] / 100)
                 liniga_limit = ayar['limit'] * (ayar['liniga_oran'] / 100)
@@ -495,175 +465,4 @@ if is_admin:
     tab_kisisel, tab_yeni, tab_ekip, tab_ayarlar, tab_destek = tabs
 else:
     tabs = st.tabs(["👤 Kendi Harcamalarım", "➕ Yeni Fiş Yükle", "🚨 Destek"])
-    tab_kisisel, tab_yeni, tab_destek = tabs[0], tabs[1], tabs[2]
-
-# --- 1. SEKME: KİŞİSEL PANEL ---
-with tab_kisisel:
-    kisisel_masraflar = get_expenses(fetch_all=False, user_id=username)
-    df_kisisel = pd.DataFrame(kisisel_masraflar) if kisisel_masraflar else pd.DataFrame()
-    draw_dashboard(df_kisisel, f"👤 Kendi Bütçem")
-    
-    if not df_kisisel.empty:
-        with st.expander("📋 Geçmiş Harcamalar & Fiş Düzenleme Listesi", expanded=False):
-            st.dataframe(df_kisisel[["Dönem", "tarih", "kategori", "İlaç", "isletme", "toplam_tutar"]], use_container_width=True)
-            st.divider()
-            render_edit_interface(df_kisisel, prefix_key="kisisel")
-
-# --- 2. SEKME: YENİ FİŞ YÜKLEME ---
-with tab_yeni:
-    st.markdown("<h3 style='text-align:center;'>➕ Yeni Fiş Ekleme</h3>", unsafe_allow_html=True)
-    
-    st.markdown("#### 1. Fişin Ait Olduğu Dönemi Seçin")
-    varsayilan_donem = get_current_period_string()
-    idx_varsayilan = TUM_DONEMLER.index(varsayilan_donem) if varsayilan_donem in TUM_DONEMLER else 0
-    secilen_hedef_donem = st.selectbox("Fişin Kaydedileceği Dönem:", TUM_DONEMLER, index=idx_varsayilan)
-    
-    st.markdown(f"#### 💰 Seçili Dönem İçin Güncel Bütçeniz ({secilen_hedef_donem})")
-    df_k = pd.DataFrame(kisisel_masraflar) if kisisel_masraflar else pd.DataFrame()
-    if not df_k.empty and 'Dönem' in df_k.columns: df_donem = df_k[df_k['Dönem'] == secilen_hedef_donem]
-    else: df_donem = pd.DataFrame()
-
-    b_cols = st.columns(len(kategoriler))
-    for idx, (kat_adi, ayar) in enumerate(kategoriler.items()):
-        with b_cols[idx]:
-            kat_limit = ayar['limit']
-            kat_harcanan = df_donem[df_donem['kategori'] == kat_adi]['toplam_tutar'].sum() if not df_donem.empty else 0.0
-            dap_harc = df_donem[(df_donem['kategori'] == kat_adi) & (df_donem['İlaç'] == 'Dapgeon')]['toplam_tutar'].sum() if not df_donem.empty else 0.0
-            lin_harc = df_donem[(df_donem['kategori'] == kat_adi) & (df_donem['İlaç'] == 'Liniga')]['toplam_tutar'].sum() if not df_donem.empty else 0.0
-            dap_limit = kat_limit * (ayar['dapgeon_oran']/100)
-            lin_limit = kat_limit * (ayar['liniga_oran']/100)
-            genel_kalan = kat_limit - kat_harcanan
-            renk = "green" if genel_kalan >= 0 else "red"
-            
-            st.markdown(f"""
-            <div class="budget-card">
-                <div class="budget-title">📂 {kat_adi}</div>
-                <div class="budget-row"><span>Genel Kalan:</span><strong style="color:{renk}">{genel_kalan:,.2f} TL</strong></div>
-                <div class="budget-row" style="color:#7f8c8d;"><span>↳ Dapgeon:</span><span>{(dap_limit - dap_harc):,.2f} TL</span></div>
-                <div class="budget-row" style="color:#7f8c8d;"><span>↳ Liniga:</span><span>{(lin_limit - lin_harc):,.2f} TL</span></div>
-            </div>
-            """, unsafe_allow_html=True)
-            
-    st.divider()
-
-    st.markdown("#### 2. Fiş Yükle ve Bilgileri Gir")
-    uploaded_file = st.file_uploader("Fotoğraf Yükle", type=['png', 'jpg', 'jpeg'])
-
-    if uploaded_file is not None:
-        image = Image.open(uploaded_file)
-        st.image(image, use_container_width=True)
-        
-        file_bytes = uploaded_file.getvalue()
-        if st.session_state.get('last_uploaded') != file_bytes:
-            st.session_state['last_uploaded'] = file_bytes
-            with st.spinner("Yapay Zeka Analiz Ediyor..."):
-                try:
-                    model = genai.GenerativeModel('gemini-2.5-flash')
-                    current_date = datetime.now().strftime("%d.%m.%Y")
-                    current_year = datetime.now().year
-                    prompt = f"""
-                    Bu fiş görüntüsünü analiz et ve JSON ver. 
-                    Format: {{"isletme": "Ad", "fis_no": "No", "tarih": "GG.AA.YYYY", "harcama_turu": "Tür", "toplam_tutar": 150.50, "kdv_orani": 10, "kdv_tutari": 15.05, "kategori": "...", "marka": "..."}}
-                    KRİTİK KURALLAR:
-                    1. Kategori şunlardan biri OLMALI: {list(kategoriler.keys())}
-                    2. İlaç şunlardan biri OLMALI: {markalar}
-                    3. ZAMAN BİLİNCİ: Bugünün tarihi {current_date}. Fişteki tarihi okurken yılı karıştırırsan veya eski okursan (örn: 2024), mantıken içinde bulunduğumuz {current_year} yılı olarak DÜZELT!
-                    """
-                    response = model.generate_content([prompt, image])
-                    json_str = response.text.replace("```json", "").replace("```", "").strip()
-                    st.session_state['ai_data'] = json.loads(json_str)
-                    st.success("Analiz tamam! Lütfen bilgileri kontrol edip kaydedin.")
-                except Exception as e:
-                    send_email_to_admin("Yapay Zeka Okuma Hatası", f"Kullanıcı: {name}\nHata: {str(e)}")
-                    st.error("Okuma hatası oluştu, lütfen manuel giriniz.")
-        
-        ai_data = st.session_state.get('ai_data', {})
-        ai_kat = ai_data.get("kategori", list(kategoriler.keys())[0])
-        ai_mar = ai_data.get("marka", markalar[0])
-        
-        with st.form("masraf_formu"):
-            c1, c2 = st.columns(2)
-            isletme = c1.text_input("İşletme Adı", safe_text(ai_data.get("isletme", "")))
-            fis_no = c1.text_input("Fiş No", safe_text(ai_data.get("fis_no", "")))
-            tarih = c1.text_input("Tarih (GG.AA.YYYY)", safe_text(ai_data.get("tarih", "")))
-            harcama_turu = c1.text_input("Harcama Türü", safe_text(ai_data.get("harcama_turu", "")))
-            sec_kat = c1.selectbox("Kategori", list(kategoriler.keys()), index=list(kategoriler.keys()).index(ai_kat) if ai_kat in kategoriler else 0)
-            
-            toplam_tutar = c2.number_input("Tutar (TL)", float(ai_data.get("toplam_tutar", 0.0)), step=10.0)
-            kdv_orani = c2.number_input("KDV Oranı (%)", float(ai_data.get("kdv_orani", 0.0)), step=1.0)
-            kdv_tutari = c2.number_input("KDV Tutarı (TL)", float(ai_data.get("kdv_tutari", 0.0)), step=1.0)
-            sec_mar = c2.selectbox("İlaç", markalar, index=markalar.index(ai_mar) if ai_mar in markalar else 0)
-
-            if st.form_submit_button("💾 Sisteme Kaydet", use_container_width=True) and toplam_tutar > 0:
-                kategori_harcanan = df_donem[df_donem['kategori'] == sec_kat]['toplam_tutar'].sum() if not df_donem.empty else 0
-                kategori_limit = kategoriler[sec_kat]['limit']
-                
-                if (kategori_harcanan + toplam_tutar) > (kategori_limit + 200):
-                    st.error(f"❌ KATEGORİ LİMİT AŞIMI! {sec_kat} kategorisi için kalan toplam bütçeniz {(kategori_limit - kategori_harcanan):,.2f} TL. En fazla 200 TL esneme payı yapabilirsiniz.")
-                else:
-                    db.collection('masraflar').add({
-                        "username": username, "kullanici_adi": name, "tarih": tarih,
-                        "Dönem": secilen_hedef_donem, 
-                        "isletme": isletme, "kategori": sec_kat, "marka": sec_mar, 
-                        "toplam_tutar": float(toplam_tutar), "kdv_orani": float(kdv_orani),
-                        "kdv_tutari": float(kdv_tutari), "fis_no": fis_no, "harcama_turu": harcama_turu,
-                        "gorsel_b64": compress_and_encode_image(image),
-                        "timestamp": firestore.SERVER_TIMESTAMP
-                    })
-                    st.success(f"✅ Fiş Başarıyla '{secilen_hedef_donem}' dönemine kaydedildi!")
-                    st.session_state['last_uploaded'] = None
-                    st.rerun()
-
-# --- 3. SEKME: DESTEK & SORUN BİLDİR ---
-with tab_destek:
-    st.markdown("<h3 style='text-align:center;'>🚨 Sistem Destek & Sorun Bildirimi</h3>", unsafe_allow_html=True)
-    st.info("Sistemde bir hata, yanlış bir kayıt veya ekleyemediğiniz bir fiş mi var? Buradan yazın, yapay zeka analiz edip yöneticiye iletecektir.")
-    with st.form("sorun_formu"):
-        sorun_metni = st.text_area("Karşılaştığınız sorunu detaylıca açıklayın:")
-        if st.form_submit_button("Yöneticiye İlet", use_container_width=True):
-            if sorun_metni:
-                with st.spinner("Yapay zeka sorununuzu analiz ediyor..."):
-                    try:
-                        model = genai.GenerativeModel('gemini-2.5-flash')
-                        prompt = f"Kullanıcı sorunu: '{sorun_metni}'. Uygulama yetkilisi için çözüm önerisi yaz."
-                        ai_analiz = model.generate_content(prompt).text
-                        bildirim = {"kullanici": name, "sorun": sorun_metni, "ai_analizi": ai_analiz, "zaman": datetime.now().strftime("%d.%m.%Y %H:%M")}
-                        db.collection('sorun_bildirimleri').add(bildirim)
-                        send_email_to_admin("Yeni Sorun Bildirimi", f"Kullanıcı: {name}\nSorun: {sorun_metni}\n\nAI Analizi:\n{ai_analiz}")
-                        st.success("Sorununuz analiz edildi ve yöneticiye güvenli bir şekilde iletildi.")
-                    except:
-                        db.collection('sorun_bildirimleri').add({"kullanici": name, "sorun": sorun_metni})
-                        st.success("Mesajınız başarıyla iletildi.")
-
-# --- ADMIN SEKMELERİ ---
-if is_admin:
-    with tab_ekip:
-        tm = get_expenses(True)
-        draw_dashboard(pd.DataFrame(tm), "👑 Tüm Ekip Harcamaları")
-        df_tum = pd.DataFrame(tm)
-        if not df_tum.empty:
-            with st.expander("📋 Tüm Ekibin Geçmiş Harcamaları & Fiş Düzenleme", expanded=False):
-                st.dataframe(df_tum[["Dönem", "kullanici_adi", "tarih", "kategori", "İlaç", "isletme", "toplam_tutar"]], use_container_width=True)
-                st.divider()
-                render_edit_interface(df_tum, prefix_key="admin")
-        
-    with tab_ayarlar:
-        st.markdown("<h3 style='text-align:center;'>⚙️ Sistem ve Bütçe Ayarları</h3>", unsafe_allow_html=True)
-        with st.form("ayar_form"):
-            yk = {}
-            for k, a in kategoriler.items():
-                lim = st.number_input(f"{k} Limit", float(a['limit']), key=f"l_{k}")
-                dap = st.slider(f"{k} Dapgeon %", 0, 100, int(a['dapgeon_oran']), key=f"o_{k}")
-                yk[k] = {"limit": lim, "dapgeon_oran": dap, "liniga_oran": 100-dap}
-            if st.form_submit_button("Ayarları Kalıcı Olarak Kaydet", type="primary", use_container_width=True):
-                save_system_settings({"kategoriler": yk, "markalar": markalar})
-                st.rerun()
-                
-        st.divider()
-        st.subheader("🚨 Gelen Sorun Bildirimleri")
-        docs = db.collection('sorun_bildirimleri').order_by('zaman', direction=firestore.Query.DESCENDING).limit(10).stream()
-        for d in docs:
-            b = d.to_dict()
-            with st.expander(f"{b.get('zaman', '')} - {b.get('kullanici', '')}"):
-                st.write(f"**Kullanıcının Sorunu:** {b.get('sorun', '')}")
-                st.write(f"**Yapay Zeka Teşhisi:** {b.get('ai_analizi', 'Analiz yapılamadı.')}")
+    tab_kisisel, tab_yeni, tab_destek = tabs[0],
